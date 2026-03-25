@@ -121,6 +121,7 @@ That's it. No API key required for the core feature. No server to run. No config
 
 ```bash
 # Setup
+npm install -g teammind #install
 npx teammind init              # one-time setup — patches Claude Code settings
 
 # Daily use
