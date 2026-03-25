@@ -46,11 +46,10 @@ export function serializeVec(vec: Float32Array): Buffer {
   return Buffer.from(vec.buffer)
 }
 
-export function deserializeVec(buf: Buffer): Float32Array {
-  // Create a copy of the buffer to ensure proper alignment
-  const copy = Buffer.allocUnsafe(buf.length)
-  buf.copy(copy)
-  return new Float32Array(copy.buffer, copy.byteOffset, copy.byteLength / 4)
+export function deserializeVec(buf: Buffer | Uint8Array): Float32Array {
+  // node:sqlite returns BLOBs as Uint8Array — normalize to Buffer first
+  const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf)
+  return new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4)
 }
 
 // Fast keyword overlap score — used when embeddings aren't available

@@ -13,21 +13,42 @@ import os from 'os'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { spawn } from 'child_process'
 
-// Read the full JSONL transcript from the path provided by the Stop hook
+// Read and parse the JSONL transcript provided by Claude Code's Stop hook.
+// Each line is a conversation entry with structure: { type, message: { role, content } }
 function readTranscriptFile(transcriptPath: string): string {
   try {
     const raw = readFileSync(transcriptPath, 'utf8')
     const lines = raw.split('\n').filter(l => l.trim())
-    return lines.map(line => {
+    const parts: string[] = []
+
+    for (const line of lines) {
       try {
         const entry = JSON.parse(line)
-        const role = (entry.role || 'unknown').toUpperCase()
-        const content = Array.isArray(entry.content)
-          ? entry.content.map((c: any) => (typeof c === 'string' ? c : c?.text || JSON.stringify(c))).join('\n')
-          : String(entry.content || '')
-        return `[${role}]: ${content}`
-      } catch { return line }
-    }).join('\n\n')
+        // Only process user/assistant turns — skip system, file-history-snapshot, etc.
+        if (entry.type !== 'user' && entry.type !== 'assistant') continue
+
+        const msg = entry.message
+        if (!msg) continue
+
+        const role = (msg.role || entry.type).toUpperCase()
+
+        // Extract only text content blocks — skip tool_use, tool_result, thinking
+        let text = ''
+        if (Array.isArray(msg.content)) {
+          text = msg.content
+            .filter((c: any) => c.type === 'text')
+            .map((c: any) => String(c.text || ''))
+            .join('\n')
+        } else if (typeof msg.content === 'string') {
+          text = msg.content
+        }
+
+        if (!text.trim()) continue
+        parts.push(`[${role}]: ${text}`)
+      } catch { /* skip malformed lines */ }
+    }
+
+    return parts.join('\n\n')
   } catch { return '' }
 }
 
