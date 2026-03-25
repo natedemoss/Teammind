@@ -24,11 +24,11 @@
 
 ## The problem
 
-Claude Code is stateless. Every session starts fresh.
+Claude Code is stateless. Every session starts from scratch.
 
-Alice spends 3 hours debugging a race condition, discovers the root cause, fixes it. Bob hits the exact same bug the next morning — his Claude has no idea what Alice learned. The senior dev who knows why the auth middleware skips OPTIONS requests goes on vacation. The codebase has 40 undocumented gotchas that only exist in old conversations.
+Alice spends 3 hours debugging a race condition, finds the root cause, and fixes it. The next morning, Bob runs into the exact same bug and his Claude knows nothing about it. The senior dev who understands why the auth middleware skips OPTIONS requests goes on vacation. The codebase is full of small, undocumented gotchas that only live in old chats.
 
-**TeamMind fixes this.** It silently captures what your team learns in Claude Code sessions and makes that knowledge available to every developer's Claude — automatically, forever.
+TeamMind solves this. It quietly captures what your team learns during Claude Code sessions and makes that knowledge available to every developer’s Claude automatically, all the time.
 
 ---
 
