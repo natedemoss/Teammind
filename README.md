@@ -15,6 +15,7 @@
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-green?style=flat-square)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-compatible-purple?style=flat-square)](https://claude.ai/code)
+[![No API key](https://img.shields.io/badge/API%20key-not%20required-brightgreen?style=flat-square)](#)
 
 *Every insight your team discovers with Claude Code — remembered forever.*
 
@@ -29,6 +30,28 @@ Claude Code is stateless. Every session starts fresh.
 Alice spends 3 hours debugging a race condition, discovers the root cause, fixes it. Bob hits the exact same bug the next morning — his Claude has no idea what Alice learned. The senior dev who knows why the auth middleware skips OPTIONS requests goes on vacation. The codebase has 40 undocumented gotchas that only exist in old conversations.
 
 **TeamMind fixes this.** It silently captures what your team learns in Claude Code sessions and makes that knowledge available to every developer's Claude — automatically, forever.
+
+---
+
+## Install
+
+**One command. 30 seconds. No API key.**
+
+```bash
+npx teammind init
+```
+
+```
+✓ Claude Code detected
+✓ Hooks installed in ~/.claude/settings.json
+✓ MCP server registered
+✓ Embedding model ready (38MB, runs locally)
+✓ Database created at ~/.teammind/db.sqlite
+
+TeamMind is active. Just use Claude Code normally.
+```
+
+That's it. No API key. No server. No config.
 
 ---
 
@@ -66,10 +89,10 @@ You close Claude Code ───────────────────�
                                       Stop hook fires
                                       Transcript saved to DB
                                              │
-                                             ▼ (fully detached)
-                                      claude-haiku-4-5 reads
-                                      the transcript, extracts
-                                      high-value memories
+                                             ▼ (fully detached, no API call)
+                                      Local signal analysis
+                                      scans assistant turns for
+                                      high-value patterns
                                              │
                                              ▼
                                       Memories embedded locally
@@ -80,38 +103,15 @@ You close Claude Code ───────────────────�
 
 ---
 
-## Install
-
-**One command. 30 seconds.**
-
-```bash
-npx teammind init
-```
-
-```
-✓ Claude Code detected (v2.1.59)
-✓ Hooks installed in ~/.claude/settings.json
-✓ MCP server registered
-✓ Embedding model ready (38MB, runs locally)
-✓ Database created at ~/.teammind/db.sqlite
-
-TeamMind is active. Just use Claude Code normally.
-```
-
-That's it. No API key required for the core feature. No server to run. No config to write.
-
-> **Optional:** Set `ANTHROPIC_API_KEY` to enable automatic memory extraction at session end (~$0.001/session). Without it, you can still add memories manually via Claude during sessions.
-
----
-
 ## Features
 
 | | |
 |---|---|
+| **No API key required** | Extraction runs entirely on-device using local signal heuristics. Zero cost, zero setup. |
 | **Silent operation** | Injects memory context before your first prompt. Captures learnings after your last. You never see it working. |
 | **Git-aware** | Memories are tagged with branch and commit. Files referenced by a memory are hashed — when those files change, the memory is marked stale automatically. |
 | **Zero native deps** | Uses Node.js built-in `node:sqlite`. No compilation, no Visual Studio, no Python. Works on Mac, Linux, and Windows out of the box. |
-| **Local-first** | Embeddings run in-process. Your code never leaves your machine unless you explicitly choose cloud sync. |
+| **Local-first** | Embeddings and extraction run fully in-process. Your code never leaves your machine. |
 | **Team sync** | Export memories to a JSON file, commit it to your repo, teammates import on `git pull`. |
 | **MCP tools** | Claude can search, add, and check memory freshness mid-session via 4 MCP tools. |
 
@@ -133,7 +133,6 @@ teammind forget --stale        # bulk-delete all stale memories
 
 # Extraction
 teammind extract --pending     # manually trigger extraction for pending sessions
-teammind config set ANTHROPIC_API_KEY sk-...   # set API key for auto-extraction
 
 # Team sync
 teammind team                  # interactive team setup wizard
@@ -145,7 +144,7 @@ teammind team --import ./path  # import memories from JSON
 
 ## What gets remembered
 
-TeamMind uses `claude-haiku-4-5` to read your session transcript and extract only memories worth keeping:
+TeamMind scans each session's assistant turns for high-signal patterns — no API call needed:
 
 | Captured | Not captured |
 |---|---|
@@ -156,6 +155,8 @@ TeamMind uses `claude-haiku-4-5` to read your session transcript and extract onl
 | Performance findings | Basic code explanations |
 | Security considerations | |
 | Important config constraints | |
+
+The extractor looks for causal reasoning ("instead of X because Y"), gotcha markers ("note that", "watch out", "caveat"), bug/fix patterns, and decision language — the same things a senior dev would highlight in a code review comment.
 
 Each memory is stored with:
 - The files it relates to (for staleness detection)
@@ -200,9 +201,6 @@ Hosted sync, free for teams under 5.
 ## Configuration
 
 ```bash
-# Set your Anthropic API key (enables auto-extraction)
-teammind config set ANTHROPIC_API_KEY sk-ant-...
-
 # View all config
 teammind config list
 
@@ -211,6 +209,9 @@ teammind config set max_inject 15
 
 # Disable auto-extraction (manual memory_add only)
 teammind config set extraction_enabled false
+
+# Adjust dedup sensitivity (default: 0.88)
+teammind config set similarity_threshold 0.85
 ```
 
 Config is stored at `~/.teammind/config.json`.
@@ -225,8 +226,9 @@ Session ends
     ▼
 Transcript saved to ~/.teammind/db.sqlite
     │
-    ▼ (background process, ~5 seconds)
-Haiku reads transcript
+    ▼ (background process, ~1 second, no network)
+Local heuristic extraction
+Scans assistant turns for high-signal paragraphs
 Extracts 0–10 high-value memories
     │
     ▼
@@ -266,9 +268,9 @@ Claude reads this before you type a word. It uses `memory_search` mid-session to
 
 ## Privacy
 
-- **Your code never leaves your machine** unless you explicitly use team export or cloud sync
+- **Your code never leaves your machine** — extraction is fully local, no API calls
 - **Embeddings run locally** using `@huggingface/transformers` — no API calls for search
-- **Extraction uses Haiku** at session end (if `ANTHROPIC_API_KEY` is set) — only the conversation transcript is sent, not your code
+- **No telemetry** — TeamMind makes zero network requests on its own
 - **Team export** scans for secrets before writing (API keys, tokens, passwords are redacted)
 - **Self-hostable** — run everything on your own infra if needed
 
@@ -347,7 +349,8 @@ This means memories about refactored code don't silently mislead future sessions
 - Node.js ≥ 18.0.0
 - Claude Code (any version with hooks support)
 - Git (for git-aware features)
-- `ANTHROPIC_API_KEY` (optional — only for auto-extraction)
+
+No API key. No cloud account. No native compilation.
 
 ---
 
@@ -361,6 +364,6 @@ MIT — use it, fork it, build on it.
 
 Built for teams who use Claude Code seriously.
 
-[npm](https://npmjs.com/package/teammind) · [Issues](https://github.com/yourusername/teammind/issues)
+[npm](https://npmjs.com/package/teammind) · [Issues](https://github.com/natedemoss/Teammind/issues)
 
 </div>
