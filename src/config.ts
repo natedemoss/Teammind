@@ -5,7 +5,6 @@ import { TEAMMIND_DIR } from './constants'
 const CONFIG_PATH = path.join(TEAMMIND_DIR, 'config.json')
 
 export interface TeamMindConfig {
-  anthropic_api_key?: string
   max_inject: number
   extraction_enabled: boolean
   similarity_threshold: number  // cosine threshold for dedup (0.0–1.0)
@@ -33,10 +32,6 @@ export function saveConfig(config: Partial<TeamMindConfig>) {
   writeFileSync(CONFIG_PATH, JSON.stringify(updated, null, 2))
 }
 
-export function getApiKey(): string | undefined {
-  return loadConfig().anthropic_api_key || process.env.ANTHROPIC_API_KEY
-}
-
 // Type-coerce string values from CLI to correct types
 export function coerceConfigValue(key: string, value: string): any {
   if (key === 'max_inject') return parseInt(value)
@@ -46,7 +41,6 @@ export function coerceConfigValue(key: string, value: string): any {
 }
 
 export const VALID_KEYS = [
-  'ANTHROPIC_API_KEY',
   'max_inject',
   'extraction_enabled',
   'similarity_threshold',

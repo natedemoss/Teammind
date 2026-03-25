@@ -40,7 +40,7 @@ import { embed, serializeVec, warmupModel } from './embed'
 import { checkAndMarkStaleness } from './staleness'
 import { exportMemories, importMemories, writeExportFile } from './sync'
 import { startMcpServer } from './server'
-import { loadConfig, saveConfig, getApiKey, coerceConfigValue, VALID_KEYS } from './config'
+import { loadConfig, saveConfig, coerceConfigValue, VALID_KEYS } from './config'
 import { findDuplicate } from './search'
 import { getPendingSessions, getAllSessions } from './db'
 
@@ -129,13 +129,7 @@ process.stdin.on('end', () => {
       spinner?.warn('Embedding model download failed (will retry on first use)')
     }
 
-    // 6. Check for API key
-    if (!process.env.ANTHROPIC_API_KEY) {
-      log(chalk.yellow('\n⚠  ANTHROPIC_API_KEY not set'))
-      log('   Auto-extraction requires an API key (~$0.001/session).')
-      log('   Without it, you can still add memories manually or import team memories.')
-      log('   Set it with: export ANTHROPIC_API_KEY=sk-...\n')
-    }
+
 
     log(chalk.bold.green('\nTeamMind is active.') + ' Just use Claude Code normally.')
     log('Run ' + chalk.cyan('teammind status') + ' to see captured memories.')
@@ -419,14 +413,6 @@ program
         return
       }
 
-      const apiKey = getApiKey()
-      if (!apiKey) {
-        console.log(chalk.yellow('⚠  No API key found. Set it with:'))
-        console.log(chalk.cyan('   teammind config set ANTHROPIC_API_KEY sk-ant-...\n'))
-        console.log(chalk.dim(`${pending.length} sessions are pending extraction.`))
-        return
-      }
-
       console.log(chalk.bold(`\nProcessing ${pending.length} pending session${pending.length > 1 ? 's' : ''}...\n`))
 
       let totalSaved = 0, totalDeduped = 0
@@ -436,7 +422,7 @@ program
       for (const session of pending) {
         const spinner = ora(`${path.basename(session.repo_path)}/${session.branch || '?'} — ${formatAge(session.created_at)}`).start()
         try {
-          const extracted = await extractMemoriesFromTranscript(session.transcript, apiKey)
+          const extracted = await extractMemoriesFromTranscript(session.transcript)
           if (extracted.length === 0) {
             markSessionProcessed(session.id)
             spinner.succeed(chalk.dim('No memories worth capturing'))
@@ -482,8 +468,7 @@ program
 
       pruneOldSessions(7)
 
-      const apiKey = getApiKey()
-      const memories = await extractMemoriesFromTranscript(session.transcript, apiKey)
+      const memories = await extractMemoriesFromTranscript(session.transcript)
       if (memories.length === 0) {
         markSessionProcessed(sessionId)
         return
@@ -670,16 +655,9 @@ program
       .argument('<key>', `Config key (${VALID_KEYS.join(', ')})`)
       .argument('<value>', 'Value to set')
       .action((key: string, value: string) => {
-        const normalizedKey = key.toUpperCase() === 'ANTHROPIC_API_KEY' ? 'anthropic_api_key' : key
-        const coerced = coerceConfigValue(normalizedKey, value)
-        saveConfig({ [normalizedKey]: coerced })
-
-        if (normalizedKey === 'anthropic_api_key') {
-          console.log(chalk.green('✓ API key saved to ~/.teammind/config.json'))
-          console.log(chalk.dim('  Auto-extraction will now run at session end.'))
-        } else {
-          console.log(chalk.green(`✓ ${key} = ${coerced}`))
-        }
+        const coerced = coerceConfigValue(key, value)
+        saveConfig({ [key]: coerced })
+        console.log(chalk.green(`✓ ${key} = ${coerced}`))
       })
   )
   .addCommand(
@@ -687,13 +665,10 @@ program
       .description('Get a config value')
       .argument('<key>', 'Config key')
       .action((key: string) => {
-        const normalizedKey = key.toUpperCase() === 'ANTHROPIC_API_KEY' ? 'anthropic_api_key' : key
         const config = loadConfig()
-        const value = (config as any)[normalizedKey]
+        const value = (config as any)[key]
         if (value === undefined) {
           console.log(chalk.red(`Unknown key: ${key}`))
-        } else if (normalizedKey === 'anthropic_api_key') {
-          console.log(value ? `sk-...${String(value).slice(-6)}` : chalk.dim('(not set)'))
         } else {
           console.log(String(value))
         }
@@ -704,11 +679,9 @@ program
       .description('Show all config values')
       .action(() => {
         const config = loadConfig()
-        const apiKey = getApiKey()
         console.log()
         console.log(chalk.bold('TeamMind Configuration'))
         console.log(chalk.dim('  ~/.teammind/config.json\n'))
-        console.log(`  ${'ANTHROPIC_API_KEY'.padEnd(25)} ${apiKey ? chalk.green('sk-...'+apiKey.slice(-6)) : chalk.yellow('(not set — auto-extraction disabled)')}`)
         console.log(`  ${'max_inject'.padEnd(25)} ${config.max_inject}`)
         console.log(`  ${'extraction_enabled'.padEnd(25)} ${config.extraction_enabled}`)
         console.log(`  ${'similarity_threshold'.padEnd(25)} ${config.similarity_threshold} (dedup threshold)`)
@@ -716,13 +689,10 @@ program
       })
   )
   .action(() => {
-    // Default: show list
     const config = loadConfig()
-    const apiKey = getApiKey()
     console.log()
     console.log(chalk.bold('TeamMind Configuration'))
     console.log(chalk.dim('  Use `teammind config set <key> <value>` to change\n'))
-    console.log(`  ${'ANTHROPIC_API_KEY'.padEnd(25)} ${apiKey ? chalk.green('set') : chalk.yellow('not set')}`)
     console.log(`  ${'max_inject'.padEnd(25)} ${config.max_inject}`)
     console.log(`  ${'extraction_enabled'.padEnd(25)} ${config.extraction_enabled}`)
     console.log(`  ${'similarity_threshold'.padEnd(25)} ${config.similarity_threshold}`)

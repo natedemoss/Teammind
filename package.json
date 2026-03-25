@@ -1,6 +1,6 @@
 {
   "name": "teammind",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Git-aware persistent memory for Claude Code teams",
   "bin": {
     "teammind": "./dist/cli.js"
@@ -21,7 +21,6 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@huggingface/transformers": "^3.0.0",
     "chalk": "^4.1.2",

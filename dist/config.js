@@ -6,7 +6,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.VALID_KEYS = void 0;
 exports.loadConfig = loadConfig;
 exports.saveConfig = saveConfig;
-exports.getApiKey = getApiKey;
 exports.coerceConfigValue = coerceConfigValue;
 const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
@@ -33,9 +32,6 @@ function saveConfig(config) {
     const updated = { ...current, ...config };
     (0, fs_1.writeFileSync)(CONFIG_PATH, JSON.stringify(updated, null, 2));
 }
-function getApiKey() {
-    return loadConfig().anthropic_api_key || process.env.ANTHROPIC_API_KEY;
-}
 // Type-coerce string values from CLI to correct types
 function coerceConfigValue(key, value) {
     if (key === 'max_inject')
@@ -47,7 +43,6 @@ function coerceConfigValue(key, value) {
     return value;
 }
 exports.VALID_KEYS = [
-    'ANTHROPIC_API_KEY',
     'max_inject',
     'extraction_enabled',
     'similarity_threshold',

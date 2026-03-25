@@ -5,5 +5,5 @@ export interface ExtractedMemory {
     file_paths: string[];
     functions: string[];
 }
-export declare function extractMemoriesFromTranscript(transcript: string, apiKey?: string): Promise<ExtractedMemory[]>;
+export declare function extractMemoriesFromTranscript(transcript: string, _apiKey?: string): Promise<ExtractedMemory[]>;
 export declare function formatTranscript(hookPayload: any): string;
