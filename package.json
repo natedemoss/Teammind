@@ -1,6 +1,6 @@
 {
   "name": "teammind",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Git-aware persistent memory for Claude Code teams",
   "bin": {
     "teammind": "./dist/cli.js"
