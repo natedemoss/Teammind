@@ -53,7 +53,7 @@ function readTranscriptFile(transcriptPath: string): string {
 }
 
 import { VERSION, TEAMMIND_DIR, HOOKS_DIR, DB_PATH } from './constants'
-import { getDb, getMemories, deleteMemory, deleteStaleMemories, countMemories, saveSession, getSession, markSessionProcessed, saveMemory, saveMemoryFiles, pruneOldSessions } from './db'
+import { getDb, getMemories, getMemoryById, deleteMemory, deleteStaleMemories, deleteAllMemories, countMemories, saveSession, getSession, markSessionProcessed, saveMemory, saveMemoryFiles, pruneOldSessions, getTagStats, getMemoriesByTag } from './db'
 import { getGitContext, hashFile, resolveFilePaths, normalizePath } from './git'
 import { rankMemoriesForInjection, formatMemoriesForContext, searchMemories } from './search'
 import { extractMemoriesFromTranscript, formatTranscript } from './extract'
@@ -167,14 +167,14 @@ program
     const repoPath = gitCtx?.root || normalizePath(process.cwd())
     const projectName = path.basename(repoPath)
 
-    const allMemories = getMemories(repoPath, { limit: 200, includeStale: true })
+    // Run staleness check in background (non-blocking)
+    checkAndMarkStaleness(repoPath).catch(() => {})
+
+    const allMemories = getMemories(repoPath, { limit: 500, includeStale: true })
     const fresh = allMemories.filter(m => !m.stale)
     const stale = allMemories.filter(m => m.stale)
     const recent = fresh.slice(0, 5)
-
-    const lastCapture = fresh[0]
-      ? formatAge(fresh[0].created_at)
-      : 'never'
+    const lastCapture = fresh[0] ? formatAge(fresh[0].created_at) : 'never'
 
     console.log(chalk.bold(`\nTeamMind — ${projectName}`))
     console.log('─'.repeat(40))
@@ -184,18 +184,31 @@ program
     } else {
       console.log(`  ${chalk.green(fresh.length)} fresh memories  •  ${stale.length > 0 ? chalk.yellow(stale.length + ' stale') : '0 stale'}  •  last captured ${lastCapture}`)
 
+      // Tag breakdown
+      const tagStats = getTagStats(repoPath)
+      const tagEntries = Object.entries(tagStats).sort((a, b) => b[1] - a[1])
+      if (tagEntries.length > 0) {
+        const maxCount = tagEntries[0][1]
+        console.log('\n' + chalk.dim('  By type:'))
+        for (const [tag, count] of tagEntries) {
+          const bar = '█'.repeat(Math.round((count / maxCount) * 10))
+          console.log(`    ${chalk.cyan(tag.padEnd(12))} ${chalk.dim(bar)} ${count}`)
+        }
+      }
+
       if (recent.length > 0) {
-        console.log('\n' + chalk.dim('Recent captures:'))
+        console.log('\n' + chalk.dim('  Recent:'))
         for (const m of recent) {
           const tag = chalk.cyan(`[${m.tags[0] || 'note'}]`)
           const age = chalk.dim(`— ${formatAge(m.created_at)}`)
-          console.log(`  • ${tag} ${m.summary} ${age}`)
+          console.log(`  • ${tag} ${m.summary.slice(0, 60)} ${age}`)
         }
       }
     }
 
     console.log()
     console.log(`Run ${chalk.cyan('teammind memories')} to browse all.`)
+    if (stale.length > 0) console.log(`Run ${chalk.cyan('teammind forget --stale')} to clear ${stale.length} stale memories.`)
     console.log(`Run ${chalk.cyan('teammind team')} to share with your team.\n`)
   })
 
@@ -205,6 +218,7 @@ program
   .command('memories [query]')
   .description('Browse or search memories for the current project')
   .option('-n, --limit <n>', 'Number of results', '20')
+  .option('-t, --tag <tag>', 'Filter by tag (bug, decision, gotcha, security, performance, config, api, pattern)')
   .option('--stale', 'Include stale memories')
   .action(async (query, opts) => {
     const gitCtx = await getGitContext(process.cwd())
@@ -213,12 +227,17 @@ program
 
     let memories
 
-    if (query) {
+    if (opts.tag) {
+      memories = getMemoriesByTag(repoPath, opts.tag, limit)
+      if (memories.length === 0) {
+        console.log(chalk.dim(`\nNo [${opts.tag}] memories found.\n`))
+        return
+      }
+    } else if (query) {
       const spinner = ora(`Searching for "${query}"...`).start()
       try {
-        const results = await searchMemories(query, repoPath, { limit })
+        memories = await searchMemories(query, repoPath, { limit })
         spinner.stop()
-        memories = results
       } catch {
         spinner.stop()
         memories = getMemories(repoPath, { limit, includeStale: opts.stale })
@@ -242,22 +261,55 @@ program
         ? chalk.dim(`\n     ${m.file_paths.join(', ')}`)
         : ''
 
-      console.log(`${chalk.bold(String(i + 1).padStart(2))}. ${tags} ${chalk.white(m.summary)}${staleNote} ${age}`)
+      console.log(`${chalk.bold(String(i + 1).padStart(2))}. ${tags} ${chalk.white(m.summary)}${staleNote}  ${age}`)
       console.log(`    ${chalk.dim(m.content.slice(0, 200) + (m.content.length > 200 ? '...' : ''))}${files}`)
       console.log(`    ${chalk.dim('id: ' + m.id)}`)
       console.log()
     }
   })
 
+// ─── memory (single) ──────────────────────────────────────────────────────────
+
+program
+  .command('memory <id>')
+  .description('View the full content of a specific memory')
+  .action((id: string) => {
+    const mem = getMemoryById(id)
+    if (!mem) {
+      console.log(chalk.red(`\nMemory not found: ${id}\n`))
+      return
+    }
+    const tags = mem.tags.length > 0 ? `[${mem.tags.join(', ')}]` : '[note]'
+    const staleNote = mem.stale ? chalk.yellow('  ⚠ STALE') : ''
+    console.log()
+    console.log(chalk.bold(chalk.cyan(tags) + '  ' + mem.summary) + staleNote)
+    console.log(chalk.dim('─'.repeat(60)))
+    console.log(mem.content)
+    console.log()
+    if (mem.file_paths.length > 0) console.log(chalk.dim('Files:   ') + mem.file_paths.join(', '))
+    if (mem.functions.length > 0) console.log(chalk.dim('Symbols: ') + mem.functions.join(', '))
+    console.log(chalk.dim(`Branch:  ${mem.git_branch || '?'}  |  By: ${mem.created_by}  |  ${formatAge(mem.created_at)}`))
+    console.log(chalk.dim(`id: ${mem.id}`))
+    console.log()
+  })
+
 // ─── forget ───────────────────────────────────────────────────────────────────
 
 program
   .command('forget [id]')
-  .description('Delete a memory or clear all stale memories')
+  .description('Delete a memory, clear stale memories, or wipe all memories for this project')
   .option('--stale', 'Delete all stale memories for this project')
+  .option('--all', 'Delete ALL memories for this project')
   .action(async (id, opts) => {
     const gitCtx = await getGitContext(process.cwd())
     const repoPath = gitCtx?.root || normalizePath(process.cwd())
+    const projectName = path.basename(repoPath)
+
+    if (opts.all) {
+      const count = deleteAllMemories(repoPath)
+      console.log(chalk.green(`✓ Deleted all ${count} memories for ${projectName}`))
+      return
+    }
 
     if (opts.stale) {
       const count = deleteStaleMemories(repoPath)
@@ -266,7 +318,7 @@ program
     }
 
     if (!id) {
-      console.log(chalk.red('Provide a memory id or use --stale to clear stale memories'))
+      console.log(chalk.red('Provide a memory id, or use --stale / --all'))
       console.log('Run ' + chalk.cyan('teammind memories') + ' to see ids')
       return
     }

@@ -226,6 +226,39 @@ export function getMemoriesWithFiles(repoPath: string): Array<Memory & { tracked
   }))
 }
 
+export function getTagStats(repoPath: string): Record<string, number> {
+  const rows = getDb().prepare(
+    'SELECT tags FROM memories WHERE repo_path = ? AND stale = 0'
+  ).all(normPath(repoPath)) as Record<string, any>[]
+  const stats: Record<string, number> = {}
+  for (const row of rows) {
+    try {
+      for (const tag of JSON.parse(row.tags || '[]')) {
+        stats[tag] = (stats[tag] || 0) + 1
+      }
+    } catch {}
+  }
+  return stats
+}
+
+export function deleteAllMemories(repoPath: string): number {
+  const result = getDb().prepare('DELETE FROM memories WHERE repo_path = ?').run(normPath(repoPath))
+  return result.changes as number
+}
+
+export function updateMemory(id: string, content: string, summary: string) {
+  getDb().prepare(
+    'UPDATE memories SET content = ?, summary = ?, updated_at = ? WHERE id = ?'
+  ).run(content, summary, Date.now(), id)
+}
+
+export function getMemoriesByTag(repoPath: string, tag: string, limit = 50): Memory[] {
+  const rows = getDb().prepare(
+    `SELECT * FROM memories WHERE repo_path = ? AND stale = 0 AND tags LIKE ? ORDER BY created_at DESC LIMIT ?`
+  ).all(normPath(repoPath), `%"${tag}"%`, limit) as Record<string, any>[]
+  return rows.map(rowToMemory)
+}
+
 // ─── Session operations ──────────────────────────────────────────────────────
 
 export function saveSession(s: Omit<Session, 'id' | 'processed' | 'created_at'>): string {
