@@ -13,15 +13,36 @@ import os from 'os'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { spawn } from 'child_process'
 
+// Read the full JSONL transcript from the path provided by the Stop hook
+function readTranscriptFile(transcriptPath: string): string {
+  try {
+    const raw = readFileSync(transcriptPath, 'utf8')
+    const lines = raw.split('\n').filter(l => l.trim())
+    return lines.map(line => {
+      try {
+        const entry = JSON.parse(line)
+        const role = (entry.role || 'unknown').toUpperCase()
+        const content = Array.isArray(entry.content)
+          ? entry.content.map((c: any) => (typeof c === 'string' ? c : c?.text || JSON.stringify(c))).join('\n')
+          : String(entry.content || '')
+        return `[${role}]: ${content}`
+      } catch { return line }
+    }).join('\n\n')
+  } catch { return '' }
+}
+
 import { VERSION, TEAMMIND_DIR, HOOKS_DIR, DB_PATH } from './constants'
 import { getDb, getMemories, deleteMemory, deleteStaleMemories, countMemories, saveSession, getSession, markSessionProcessed, saveMemory, saveMemoryFiles, pruneOldSessions } from './db'
-import { getGitContext, hashFile, resolveFilePaths } from './git'
+import { getGitContext, hashFile, resolveFilePaths, normalizePath } from './git'
 import { rankMemoriesForInjection, formatMemoriesForContext, searchMemories } from './search'
 import { extractMemoriesFromTranscript, formatTranscript } from './extract'
 import { embed, serializeVec, warmupModel } from './embed'
 import { checkAndMarkStaleness } from './staleness'
 import { exportMemories, importMemories, writeExportFile } from './sync'
 import { startMcpServer } from './server'
+import { loadConfig, saveConfig, getApiKey, coerceConfigValue, VALID_KEYS } from './config'
+import { findDuplicate } from './search'
+import { getPendingSessions, getAllSessions } from './db'
 
 const program = new Command()
 
@@ -128,7 +149,7 @@ program
   .description('Show memory stats for the current project')
   .action(async () => {
     const gitCtx = await getGitContext(process.cwd())
-    const repoPath = gitCtx?.root || process.cwd()
+    const repoPath = gitCtx?.root || normalizePath(process.cwd())
     const projectName = path.basename(repoPath)
 
     const allMemories = getMemories(repoPath, { limit: 200, includeStale: true })
@@ -172,7 +193,7 @@ program
   .option('--stale', 'Include stale memories')
   .action(async (query, opts) => {
     const gitCtx = await getGitContext(process.cwd())
-    const repoPath = gitCtx?.root || process.cwd()
+    const repoPath = gitCtx?.root || normalizePath(process.cwd())
     const limit = parseInt(opts.limit) || 20
 
     let memories
@@ -221,7 +242,7 @@ program
   .option('--stale', 'Delete all stale memories for this project')
   .action(async (id, opts) => {
     const gitCtx = await getGitContext(process.cwd())
-    const repoPath = gitCtx?.root || process.cwd()
+    const repoPath = gitCtx?.root || normalizePath(process.cwd())
 
     if (opts.stale) {
       const count = deleteStaleMemories(repoPath)
@@ -248,7 +269,7 @@ program
   .option('--import <path>', 'Import memories from a file')
   .action(async (opts) => {
     const gitCtx = await getGitContext(process.cwd())
-    const repoPath = gitCtx?.root || process.cwd()
+    const repoPath = gitCtx?.root || normalizePath(process.cwd())
 
     if (opts.export) {
       const spinner = ora('Exporting memories...').start()
@@ -315,7 +336,8 @@ program
       // Run staleness check in background
       checkAndMarkStaleness(repoPath).catch(() => {})
 
-      const memories = rankMemoriesForInjection(repoPath, gitCtx.branch)
+      const config = loadConfig()
+      const memories = rankMemoriesForInjection(repoPath, gitCtx.branch, config.max_inject)
       if (memories.length === 0) return
 
       const total = countMemories(repoPath)
@@ -346,10 +368,19 @@ program
       if (!raw) return
 
       const hookPayload = JSON.parse(raw)
-      const transcript = formatTranscript(hookPayload)
+
+      // Claude Code Stop hook provides transcript_path (a JSONL file), not inline transcript
+      let transcript = ''
+      if (hookPayload.transcript_path && existsSync(hookPayload.transcript_path)) {
+        transcript = readTranscriptFile(hookPayload.transcript_path)
+      } else {
+        // Fallback: try to format whatever is in the payload (older format or direct test)
+        transcript = formatTranscript(hookPayload)
+      }
+
       if (!transcript || transcript.length < 100) return
 
-      const cwd = hookPayload.cwd || process.cwd()
+      const cwd = normalizePath(hookPayload.cwd || process.cwd())
       const gitCtx = await getGitContext(cwd)
       const repoPath = gitCtx?.root || cwd
 
@@ -375,22 +406,92 @@ program
 // ─── extract (background worker) ─────────────────────────────────────────────
 
 program
-  .command('extract <sessionId>')
-  .description('Extract memories from a saved session (background worker)')
-  .action(async (sessionId: string) => {
+  .command('extract [sessionId]')
+  .description('Extract memories: provide a session ID (background worker) or use --pending for all')
+  .option('--pending', 'Process all pending sessions interactively')
+  .option('--verbose', 'Show extraction details')
+  .action(async (sessionId: string | undefined, opts) => {
+    // ── --pending mode: interactive extraction of all queued sessions ──────
+    if (opts.pending || !sessionId) {
+      const pending = getPendingSessions()
+      if (pending.length === 0) {
+        console.log(chalk.green('✓ No pending sessions — everything is up to date.'))
+        return
+      }
+
+      const apiKey = getApiKey()
+      if (!apiKey) {
+        console.log(chalk.yellow('⚠  No API key found. Set it with:'))
+        console.log(chalk.cyan('   teammind config set ANTHROPIC_API_KEY sk-ant-...\n'))
+        console.log(chalk.dim(`${pending.length} sessions are pending extraction.`))
+        return
+      }
+
+      console.log(chalk.bold(`\nProcessing ${pending.length} pending session${pending.length > 1 ? 's' : ''}...\n`))
+
+      let totalSaved = 0, totalDeduped = 0
+      const config = loadConfig()
+      const username = os.userInfo().username || 'local'
+
+      for (const session of pending) {
+        const spinner = ora(`${path.basename(session.repo_path)}/${session.branch || '?'} — ${formatAge(session.created_at)}`).start()
+        try {
+          const extracted = await extractMemoriesFromTranscript(session.transcript, apiKey)
+          if (extracted.length === 0) {
+            markSessionProcessed(session.id)
+            spinner.succeed(chalk.dim('No memories worth capturing'))
+            continue
+          }
+
+          let saved = 0, deduped = 0
+          for (const m of extracted) {
+            let embedding: Buffer | null = null
+            try { const v = await embed(m.content); embedding = serializeVec(v) } catch {}
+            if (embedding) {
+              const dupId = await findDuplicate(m.content, session.repo_path, config.similarity_threshold)
+              if (dupId) { deduped++; continue }
+            }
+            const id = saveMemory({
+              content: m.content, summary: m.summary, tags: m.tags,
+              file_paths: m.file_paths, functions: m.functions, embedding,
+              repo_path: session.repo_path, git_commit: session.commit,
+              git_branch: session.branch, created_by: username, source: 'auto', stale: 0,
+            })
+            saved++
+            if (m.file_paths.length > 0) {
+              const absFiles = resolveFilePaths(m.file_paths, session.repo_path)
+              saveMemoryFiles(id, absFiles.map(fp => ({ path: path.relative(session.repo_path, fp), hash: hashFile(fp) })))
+            }
+            if (opts.verbose) console.log(`   ${chalk.cyan(`[${m.tags[0]||'note'}]`)} ${m.summary}`)
+          }
+          markSessionProcessed(session.id)
+          totalSaved += saved; totalDeduped += deduped
+          spinner.succeed(`${chalk.green(saved + ' saved')}${deduped > 0 ? chalk.dim(` · ${deduped} dupes skipped`) : ''}`)
+        } catch (e: any) {
+          spinner.fail(chalk.red(e?.message || 'failed'))
+        }
+      }
+      console.log(chalk.bold(`\nDone. ${totalSaved} new memories` + (totalDeduped > 0 ? `, ${totalDeduped} duplicates skipped.` : '.') + '\n'))
+      return
+    }
+
+    // ── session ID mode: background worker (called by Stop hook) ──────────
     try {
       const session = getSession(sessionId)
       if (!session || session.processed) return
 
       pruneOldSessions(7)
 
-      const memories = await extractMemoriesFromTranscript(session.transcript)
+      const apiKey = getApiKey()
+      const memories = await extractMemoriesFromTranscript(session.transcript, apiKey)
       if (memories.length === 0) {
         markSessionProcessed(sessionId)
         return
       }
 
       const username = os.userInfo().username || 'local'
+      const config = loadConfig()
+      let saved = 0, deduped = 0
 
       for (const m of memories) {
         // Embed the memory
@@ -399,6 +500,16 @@ program
           const vec = await embed(m.content)
           embedding = serializeVec(vec)
         } catch { /* embedding optional */ }
+
+        // Deduplication: skip if a very similar memory already exists
+        if (embedding) {
+          const dupId = await findDuplicate(m.content, session.repo_path, config.similarity_threshold)
+          if (dupId) {
+            deduped++
+            if (opts?.verbose) console.error(`[teammind] Deduped: "${m.summary}"`)
+            continue
+          }
+        }
 
         const id = saveMemory({
           content: m.content,
@@ -414,6 +525,7 @@ program
           source: 'auto',
           stale: 0,
         })
+        saved++
 
         // Save file refs with current hashes
         if (m.file_paths.length > 0) {
@@ -423,6 +535,10 @@ program
             hash: hashFile(fp)
           })))
         }
+      }
+
+      if (opts?.verbose) {
+        console.error(`[teammind] Extracted ${saved} new memories (${deduped} duplicates skipped)`)
       }
 
       markSessionProcessed(sessionId)
@@ -495,5 +611,122 @@ function formatAge(ts: number): string {
   if (days < 365) return `${Math.floor(days / 30)}mo ago`
   return `${Math.floor(days / 365)}y ago`
 }
+
+// ─── sessions ────────────────────────────────────────────────────────────────
+
+program
+  .command('sessions')
+  .description('List captured sessions (processed and pending extraction)')
+  .option('-n, --limit <n>', 'Number of sessions to show', '15')
+  .action(async (opts) => {
+    const limit = parseInt(opts.limit) || 15
+    const sessions = getAllSessions(limit)
+
+    if (sessions.length === 0) {
+      console.log(chalk.dim('\nNo sessions captured yet.\n'))
+      return
+    }
+
+    const pending = sessions.filter(s => !s.processed)
+    const done = sessions.filter(s => s.processed)
+
+    console.log()
+
+    if (pending.length > 0) {
+      console.log(chalk.yellow.bold(`⏳ Pending extraction (${pending.length})`))
+      console.log(chalk.dim('   Run `teammind extract --pending` to process these now\n'))
+      for (const s of pending) {
+        const age = formatAge(s.created_at)
+        const kb = Math.round(s.transcript_len / 1024)
+        const repo = path.basename(s.repo_path)
+        console.log(`   ${chalk.white(s.id.slice(0, 8))}  ${repo}/${s.branch || '?'}  ${kb}KB  ${chalk.dim(age)}`)
+      }
+      console.log()
+    }
+
+    if (done.length > 0) {
+      console.log(chalk.green.bold(`✓ Processed (${done.length})`))
+      console.log()
+      for (const s of done.slice(0, 8)) {
+        const age = formatAge(s.created_at)
+        const kb = Math.round(s.transcript_len / 1024)
+        const repo = path.basename(s.repo_path)
+        console.log(`   ${chalk.dim(s.id.slice(0, 8))}  ${repo}/${s.branch || '?'}  ${kb}KB  ${chalk.dim(age)}`)
+      }
+    }
+
+    console.log()
+  })
+
+
+// ─── config ───────────────────────────────────────────────────────────────────
+
+program
+  .command('config')
+  .description('View or update TeamMind configuration')
+  .addCommand(
+    new (require('commander').Command)('set')
+      .description('Set a config value')
+      .argument('<key>', `Config key (${VALID_KEYS.join(', ')})`)
+      .argument('<value>', 'Value to set')
+      .action((key: string, value: string) => {
+        const normalizedKey = key.toUpperCase() === 'ANTHROPIC_API_KEY' ? 'anthropic_api_key' : key
+        const coerced = coerceConfigValue(normalizedKey, value)
+        saveConfig({ [normalizedKey]: coerced })
+
+        if (normalizedKey === 'anthropic_api_key') {
+          console.log(chalk.green('✓ API key saved to ~/.teammind/config.json'))
+          console.log(chalk.dim('  Auto-extraction will now run at session end.'))
+        } else {
+          console.log(chalk.green(`✓ ${key} = ${coerced}`))
+        }
+      })
+  )
+  .addCommand(
+    new (require('commander').Command)('get')
+      .description('Get a config value')
+      .argument('<key>', 'Config key')
+      .action((key: string) => {
+        const normalizedKey = key.toUpperCase() === 'ANTHROPIC_API_KEY' ? 'anthropic_api_key' : key
+        const config = loadConfig()
+        const value = (config as any)[normalizedKey]
+        if (value === undefined) {
+          console.log(chalk.red(`Unknown key: ${key}`))
+        } else if (normalizedKey === 'anthropic_api_key') {
+          console.log(value ? `sk-...${String(value).slice(-6)}` : chalk.dim('(not set)'))
+        } else {
+          console.log(String(value))
+        }
+      })
+  )
+  .addCommand(
+    new (require('commander').Command)('list')
+      .description('Show all config values')
+      .action(() => {
+        const config = loadConfig()
+        const apiKey = getApiKey()
+        console.log()
+        console.log(chalk.bold('TeamMind Configuration'))
+        console.log(chalk.dim('  ~/.teammind/config.json\n'))
+        console.log(`  ${'ANTHROPIC_API_KEY'.padEnd(25)} ${apiKey ? chalk.green('sk-...'+apiKey.slice(-6)) : chalk.yellow('(not set — auto-extraction disabled)')}`)
+        console.log(`  ${'max_inject'.padEnd(25)} ${config.max_inject}`)
+        console.log(`  ${'extraction_enabled'.padEnd(25)} ${config.extraction_enabled}`)
+        console.log(`  ${'similarity_threshold'.padEnd(25)} ${config.similarity_threshold} (dedup threshold)`)
+        console.log()
+      })
+  )
+  .action(() => {
+    // Default: show list
+    const config = loadConfig()
+    const apiKey = getApiKey()
+    console.log()
+    console.log(chalk.bold('TeamMind Configuration'))
+    console.log(chalk.dim('  Use `teammind config set <key> <value>` to change\n'))
+    console.log(`  ${'ANTHROPIC_API_KEY'.padEnd(25)} ${apiKey ? chalk.green('set') : chalk.yellow('not set')}`)
+    console.log(`  ${'max_inject'.padEnd(25)} ${config.max_inject}`)
+    console.log(`  ${'extraction_enabled'.padEnd(25)} ${config.extraction_enabled}`)
+    console.log(`  ${'similarity_threshold'.padEnd(25)} ${config.similarity_threshold}`)
+    console.log()
+  })
 
 program.parse()

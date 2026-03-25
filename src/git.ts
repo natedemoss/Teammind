@@ -9,13 +9,17 @@ export interface GitContext {
   commit: string
 }
 
+export function normalizePath(p: string): string {
+  return p.replace(/\\/g, '/')
+}
+
 export async function getGitContext(cwd: string): Promise<GitContext | null> {
   try {
     const git = simpleGit(cwd)
     const isRepo = await git.checkIsRepo()
     if (!isRepo) return null
 
-    const root = (await git.revparse(['--show-toplevel'])).trim()
+    const root = normalizePath((await git.revparse(['--show-toplevel'])).trim())
     const branchResult = await git.branch()
     const branch = branchResult.current || 'unknown'
     const commit = (await git.revparse(['HEAD'])).trim()

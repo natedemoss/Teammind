@@ -72,7 +72,7 @@ export async function searchMemories(
 }
 
 // Fast keyword-only ranking — used for session injection (no model needed, must be fast)
-export function rankMemoriesForInjection(repoPath: string, branch: string): Memory[] {
+export function rankMemoriesForInjection(repoPath: string, branch: string, limit = MAX_INJECT_MEMORIES): Memory[] {
   const memories = getMemories(repoPath, { limit: 200, includeStale: false })
   if (memories.length === 0) return []
 
@@ -96,7 +96,34 @@ export function rankMemoriesForInjection(repoPath: string, branch: string): Memo
 
   return scored
     .sort((a, b) => b.score - a.score)
-    .slice(0, MAX_INJECT_MEMORIES)
+    .slice(0, limit)
+}
+
+// Check if a memory is a near-duplicate of an existing one
+// Returns the ID of the duplicate if found, null otherwise
+export async function findDuplicate(
+  content: string,
+  repoPath: string,
+  threshold = 0.88
+): Promise<string | null> {
+  const existing = getAllMemoriesWithEmbeddings(repoPath)
+  if (existing.length === 0) return null
+
+  let queryVec: Float32Array | null = null
+  try {
+    queryVec = await embed(content)
+  } catch {
+    return null // can't dedup without embeddings
+  }
+
+  for (const m of existing) {
+    if (!m.embedding) continue
+    const memVec = deserializeVec(m.embedding)
+    const sim = cosineSimilarity(queryVec, memVec)
+    if (sim >= threshold) return m.id
+  }
+
+  return null
 }
 
 // Format memories for injection into Claude's context

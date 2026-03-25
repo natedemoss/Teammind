@@ -10,13 +10,13 @@ async function getPipeline(): Promise<any> {
   if (_loadPromise) return _loadPromise
 
   _loadPromise = (async () => {
-    // @xenova/transformers is ESM — use dynamic import
-    const { pipeline, env } = await import('@xenova/transformers')
+    // @huggingface/transformers is ESM — use dynamic import
+    const { pipeline, env } = await import('@huggingface/transformers')
     env.cacheDir = MODEL_CACHE_DIR
     env.allowRemoteModels = true
 
     _pipeline = await pipeline('feature-extraction', EMBED_MODEL, {
-      quantized: true,
+      dtype: 'q8',  // 8-bit quantization for smaller footprint
     })
     return _pipeline
   })()

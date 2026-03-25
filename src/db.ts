@@ -2,6 +2,10 @@ import { mkdirSync, existsSync } from 'fs'
 import { nanoid } from 'nanoid'
 import { DB_PATH, TEAMMIND_DIR } from './constants'
 
+function normPath(p: string): string {
+  return p.replace(/\\/g, '/')
+}
+
 // node:sqlite is built into Node 22+ — zero native deps, no compilation needed
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { DatabaseSync } = require('node:sqlite')
@@ -137,7 +141,7 @@ export function saveMemory(m: Omit<Memory, 'id' | 'created_at' | 'updated_at'>):
     JSON.stringify(m.file_paths),
     JSON.stringify(m.functions),
     m.embedding,
-    m.repo_path, m.git_commit, m.git_branch,
+    normPath(m.repo_path), m.git_commit, m.git_branch,
     now, now, m.created_by, m.source, m.stale
   )
 
@@ -171,7 +175,7 @@ export function getMemories(
   const sql = includeStale
     ? 'SELECT * FROM memories WHERE repo_path = ? ORDER BY created_at DESC LIMIT ?'
     : 'SELECT * FROM memories WHERE repo_path = ? AND stale = 0 ORDER BY created_at DESC LIMIT ?'
-  const rows = db.prepare(sql).all(repoPath, limit) as Record<string, any>[]
+  const rows = db.prepare(sql).all(normPath(repoPath), limit) as Record<string, any>[]
   return rows.map(rowToMemory)
 }
 
@@ -181,7 +185,7 @@ export function getAllMemoriesWithEmbeddings(repoPath: string): Memory[] {
     SELECT * FROM memories
     WHERE repo_path = ? AND stale = 0 AND embedding IS NOT NULL
     ORDER BY created_at DESC LIMIT 500
-  `).all(repoPath) as Record<string, any>[]
+  `).all(normPath(repoPath)) as Record<string, any>[]
   return rows.map(rowToMemory)
 }
 
@@ -196,7 +200,7 @@ export function deleteMemory(id: string) {
 }
 
 export function deleteStaleMemories(repoPath: string): number {
-  const result = getDb().prepare('DELETE FROM memories WHERE repo_path = ? AND stale = 1').run(repoPath)
+  const result = getDb().prepare('DELETE FROM memories WHERE repo_path = ? AND stale = 1').run(normPath(repoPath))
   return result.changes as number
 }
 
@@ -206,7 +210,7 @@ export function markMemoryStale(id: string) {
 
 export function countMemories(repoPath: string): number {
   const db = getDb()
-  const row = db.prepare('SELECT COUNT(*) as n FROM memories WHERE repo_path = ? AND stale = 0').get(repoPath) as { n: number }
+  const row = db.prepare('SELECT COUNT(*) as n FROM memories WHERE repo_path = ? AND stale = 0').get(normPath(repoPath)) as { n: number }
   return row.n
 }
 
@@ -255,4 +259,37 @@ export function markSessionProcessed(id: string) {
 export function pruneOldSessions(daysOld = 7) {
   const cutoff = Date.now() - daysOld * 24 * 60 * 60 * 1000
   getDb().prepare('DELETE FROM sessions WHERE created_at < ? AND processed = 1').run(cutoff)
+}
+
+export function getPendingSessions(): Session[] {
+  const rows = getDb().prepare(
+    'SELECT * FROM sessions WHERE processed = 0 ORDER BY created_at DESC'
+  ).all() as Record<string, any>[]
+  return rows.map(row => ({
+    id: row.id,
+    repo_path: row.repo_path,
+    branch: row.branch,
+    commit: row.commit_hash,
+    transcript: row.transcript,
+    processed: row.processed as 0 | 1,
+    created_at: row.created_at,
+  } as Session))
+}
+
+export function getAllSessions(limit = 20): Array<Session & { transcript_len: number }> {
+  const rows = getDb().prepare(`
+    SELECT id, repo_path, branch, commit_hash, processed, created_at,
+           LENGTH(transcript) as transcript_len
+    FROM sessions ORDER BY created_at DESC LIMIT ?
+  `).all(limit) as Record<string, any>[]
+  return rows.map(row => ({
+    id: row.id,
+    repo_path: row.repo_path,
+    branch: row.branch,
+    commit: row.commit_hash,
+    transcript: '',
+    processed: row.processed as 0 | 1,
+    created_at: row.created_at,
+    transcript_len: row.transcript_len,
+  }))
 }
