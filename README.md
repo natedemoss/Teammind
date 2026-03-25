@@ -85,7 +85,7 @@ You close Claude Code ───────────────────�
 **One command. 30 seconds.**
 
 ```bash
-npx teammind init
+npm install -g teammind
 ```
 
 ```
