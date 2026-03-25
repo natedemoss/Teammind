@@ -22,6 +22,30 @@
 
 ---
 
+## Install
+
+**One command. 30 seconds.**
+
+```bash
+npm install -g teammind
+```
+
+```
+✓ Claude Code detected (v2.1.59)
+✓ Hooks installed in ~/.claude/settings.json
+✓ MCP server registered
+✓ Embedding model ready (38MB, runs locally)
+✓ Database created at ~/.teammind/db.sqlite
+
+TeamMind is active. Just use Claude Code normally.
+```
+
+That's it. No API key required for the core feature. No server to run. No config to write.
+
+> **Optional:** Set `ANTHROPIC_API_KEY` to enable automatic memory extraction at session end (~$0.001/session). Without it, you can still add memories manually via Claude during sessions.
+
+---
+
 ## The problem
 
 Claude Code is stateless. Every session starts from scratch.
@@ -77,30 +101,6 @@ You close Claude Code ───────────────────�
                                       File hashes saved for
                                       staleness detection
 ```
-
----
-
-## Install
-
-**One command. 30 seconds.**
-
-```bash
-npm install -g teammind
-```
-
-```
-✓ Claude Code detected (v2.1.59)
-✓ Hooks installed in ~/.claude/settings.json
-✓ MCP server registered
-✓ Embedding model ready (38MB, runs locally)
-✓ Database created at ~/.teammind/db.sqlite
-
-TeamMind is active. Just use Claude Code normally.
-```
-
-That's it. No API key required for the core feature. No server to run. No config to write.
-
-> **Optional:** Set `ANTHROPIC_API_KEY` to enable automatic memory extraction at session end (~$0.001/session). Without it, you can still add memories manually via Claude during sessions.
 
 ---
 
