@@ -773,6 +773,56 @@ program
     console.log()
   })
 
+// ─── remember ────────────────────────────────────────────────────────────────
+
+program
+  .command('remember <text>')
+  .description('Manually save a memory for the current project')
+  .option('-t, --tag <tag>', 'Memory type (bug, decision, gotcha, security, performance, config, api, pattern)', 'note')
+  .action(async (text: string, opts) => {
+    const gitCtx = await getGitContext(process.cwd())
+    const repoPath = gitCtx?.root || normalizePath(process.cwd())
+    const username = os.userInfo().username || 'local'
+    const config = loadConfig()
+
+    const spinner = ora('Saving memory...').start()
+
+    let embedding: Buffer | null = null
+    try {
+      const vec = await embed(text)
+      embedding = serializeVec(vec)
+    } catch { /* embedding optional */ }
+
+    if (embedding) {
+      const dupId = await findDuplicate(text, repoPath, config.similarity_threshold)
+      if (dupId) {
+        spinner.warn('A very similar memory already exists — skipped')
+        console.log(chalk.dim(`  Run ${chalk.cyan('teammind memory ' + dupId)} to view it`))
+        return
+      }
+    }
+
+    const summary = text.match(/^.{10,}?[.!?](?:\s|$)/)?.[0]?.trim().slice(0, 80) || text.slice(0, 80)
+
+    const id = saveMemory({
+      content: text,
+      summary,
+      tags: [opts.tag],
+      file_paths: [],
+      functions: [],
+      embedding,
+      repo_path: repoPath,
+      git_commit: gitCtx?.commit || null,
+      git_branch: gitCtx?.branch || null,
+      created_by: username,
+      source: 'manual',
+      stale: 0,
+    })
+
+    spinner.succeed(`Memory saved  ${chalk.dim('id: ' + id)}`)
+    console.log(chalk.dim(`\n  [${opts.tag}] ${summary}\n`))
+  })
+
 // ─── persona ──────────────────────────────────────────────────────────────────
 
 program
