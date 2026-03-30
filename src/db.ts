@@ -289,6 +289,11 @@ export function markSessionProcessed(id: string) {
   getDb().prepare('UPDATE sessions SET processed = 1 WHERE id = ?').run(id)
 }
 
+export function countProcessedSessions(): number {
+  const row = getDb().prepare('SELECT COUNT(*) as n FROM sessions WHERE processed = 1').get() as { n: number }
+  return row.n
+}
+
 export function pruneOldSessions(daysOld = 7) {
   const cutoff = Date.now() - daysOld * 24 * 60 * 60 * 1000
   getDb().prepare('DELETE FROM sessions WHERE created_at < ? AND processed = 1').run(cutoff)

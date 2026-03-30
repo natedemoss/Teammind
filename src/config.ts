@@ -8,12 +8,14 @@ export interface TeamMindConfig {
   max_inject: number
   extraction_enabled: boolean
   similarity_threshold: number  // cosine threshold for dedup (0.0–1.0)
+  persona_auto_update_interval: number  // re-run persona every N sessions (0 = disabled)
 }
 
 const DEFAULTS: TeamMindConfig = {
   max_inject: 10,
   extraction_enabled: true,
   similarity_threshold: 0.88,
+  persona_auto_update_interval: 10,
 }
 
 export function loadConfig(): TeamMindConfig {
@@ -37,6 +39,7 @@ export function coerceConfigValue(key: string, value: string): any {
   if (key === 'max_inject') return parseInt(value)
   if (key === 'extraction_enabled') return value === 'true' || value === '1'
   if (key === 'similarity_threshold') return parseFloat(value)
+  if (key === 'persona_auto_update_interval') return parseInt(value)
   return value
 }
 
@@ -44,4 +47,5 @@ export const VALID_KEYS = [
   'max_inject',
   'extraction_enabled',
   'similarity_threshold',
+  'persona_auto_update_interval',
 ] as const
