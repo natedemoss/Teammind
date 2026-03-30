@@ -1,6 +1,6 @@
 {
   "name": "teammind",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Git-aware persistent memory for Claude Code teams",
   "bin": {
     "teammind": "./dist/cli.js"
@@ -15,7 +15,13 @@
     "dev": "tsx src/cli.ts",
     "prepublishOnly": "npm run build"
   },
-  "keywords": ["claude-code", "mcp", "memory", "ai", "team"],
+  "keywords": [
+    "claude-code",
+    "mcp",
+    "memory",
+    "ai",
+    "team"
+  ],
   "license": "MIT",
   "engines": {
     "node": ">=18.0.0"
