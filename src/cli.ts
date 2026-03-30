@@ -63,7 +63,7 @@ import { exportMemories, importMemories, writeExportFile } from './sync'
 import { startMcpServer } from './server'
 import { loadConfig, saveConfig, coerceConfigValue, VALID_KEYS } from './config'
 import { findDuplicate } from './search'
-import { getPendingSessions, getAllSessions } from './db'
+import { getPendingSessions, getAllSessions, countProcessedSessions } from './db'
 import { extractPreferencesFromTranscripts, readPersonaSection, writePersonaSection, clearPersonaSection, GLOBAL_CLAUDE_MD } from './persona'
 
 const program = new Command()
@@ -601,6 +601,24 @@ program
       }
 
       markSessionProcessed(sessionId)
+
+      // Auto-update persona if interval is set and we've hit the threshold
+      const interval = config.persona_auto_update_interval
+      if (interval > 0) {
+        const totalProcessed = countProcessedSessions()
+        if (totalProcessed % interval === 0) {
+          try {
+            const sessionMeta = getAllSessions(50).filter(s => s.processed && s.transcript_len > 200)
+            const transcripts: string[] = []
+            for (const s of sessionMeta.slice(0, 30)) {
+              const full = getSession(s.id)
+              if (full?.transcript) transcripts.push(full.transcript)
+            }
+            const prefs = extractPreferencesFromTranscripts(transcripts)
+            if (prefs.length > 0) writePersonaSection(prefs)
+          } catch { /* never break the background worker */ }
+        }
+      }
     } catch {
       // Background worker — silent failure is fine
     }
@@ -759,6 +777,7 @@ program
         console.log(`  ${'max_inject'.padEnd(25)} ${config.max_inject}`)
         console.log(`  ${'extraction_enabled'.padEnd(25)} ${config.extraction_enabled}`)
         console.log(`  ${'similarity_threshold'.padEnd(25)} ${config.similarity_threshold} (dedup threshold)`)
+        console.log(`  ${'persona_auto_update_interval'.padEnd(25)} ${config.persona_auto_update_interval} (sessions, 0 = disabled)`)
         console.log()
       })
   )
@@ -770,6 +789,7 @@ program
     console.log(`  ${'max_inject'.padEnd(25)} ${config.max_inject}`)
     console.log(`  ${'extraction_enabled'.padEnd(25)} ${config.extraction_enabled}`)
     console.log(`  ${'similarity_threshold'.padEnd(25)} ${config.similarity_threshold}`)
+    console.log(`  ${'persona_auto_update_interval'.padEnd(25)} ${config.persona_auto_update_interval} (sessions, 0 = disabled)`)
     console.log()
   })
 
