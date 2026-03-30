@@ -64,6 +64,7 @@ import { startMcpServer } from './server'
 import { loadConfig, saveConfig, coerceConfigValue, VALID_KEYS } from './config'
 import { findDuplicate } from './search'
 import { getPendingSessions, getAllSessions } from './db'
+import { extractPreferencesFromTranscripts, readPersonaSection, writePersonaSection, clearPersonaSection, GLOBAL_CLAUDE_MD } from './persona'
 
 const program = new Command()
 
@@ -769,6 +770,70 @@ program
     console.log(`  ${'max_inject'.padEnd(25)} ${config.max_inject}`)
     console.log(`  ${'extraction_enabled'.padEnd(25)} ${config.extraction_enabled}`)
     console.log(`  ${'similarity_threshold'.padEnd(25)} ${config.similarity_threshold}`)
+    console.log()
+  })
+
+// ─── persona ──────────────────────────────────────────────────────────────────
+
+program
+  .command('persona')
+  .description('Build your interaction preferences and write them to CLAUDE.md')
+  .option('--update', 'Analyze sessions and update preferences in CLAUDE.md')
+  .option('--reset', 'Remove persona section from CLAUDE.md')
+  .action(async (opts) => {
+    if (opts.reset) {
+      clearPersonaSection()
+      console.log(chalk.green('✓ Persona section removed from ~/.claude/CLAUDE.md'))
+      return
+    }
+
+    // Default: show current persona
+    if (!opts.update) {
+      const current = readPersonaSection()
+      if (!current) {
+        console.log(chalk.dim('\nNo persona set yet.'))
+        console.log('Run ' + chalk.cyan('teammind persona --update') + ' to build one from your sessions.\n')
+      } else {
+        console.log(chalk.bold('\nYour interaction preferences (in ~/.claude/CLAUDE.md):\n'))
+        for (const line of current.split('\n').filter(l => l.startsWith('-'))) {
+          console.log('  ' + chalk.cyan('•') + ' ' + line.slice(2))
+        }
+        console.log()
+        console.log('Run ' + chalk.cyan('teammind persona --update') + ' to refresh.')
+        console.log('Run ' + chalk.cyan('teammind persona --reset') + ' to remove.\n')
+      }
+      return
+    }
+
+    // --update: analyze sessions and write to CLAUDE.md
+    const spinner = ora('Analyzing your sessions for preferences...').start()
+
+    const sessionMeta = getAllSessions(50).filter(s => s.processed && s.transcript_len > 200)
+    if (sessionMeta.length === 0) {
+      spinner.fail('No sessions to analyze yet — use Claude Code normally first')
+      return
+    }
+
+    const transcripts: string[] = []
+    for (const s of sessionMeta.slice(0, 30)) {
+      const full = getSession(s.id)
+      if (full?.transcript) transcripts.push(full.transcript)
+    }
+
+    const prefs = extractPreferencesFromTranscripts(transcripts)
+
+    if (prefs.length === 0) {
+      spinner.warn('No strong preferences detected yet — use Claude Code more and try again')
+      return
+    }
+
+    writePersonaSection(prefs)
+    spinner.succeed(`Updated ${GLOBAL_CLAUDE_MD}`)
+
+    console.log(chalk.bold('\nAdded to ~/.claude/CLAUDE.md:\n'))
+    for (const p of prefs) {
+      console.log('  ' + chalk.green('+') + ' ' + p)
+    }
     console.log()
   })
 

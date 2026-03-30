@@ -9,7 +9,7 @@
     ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═════╝
 ```
 
-**Git-aware persistent memory for Claude Code teams**
+**Git-aware persistent memory for Claude Code teams — and a personal AI that learns how you work**
 
 [![npm version](https://img.shields.io/npm/v/teammind?color=blue&style=flat-square)](https://npmjs.com/package/teammind)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-green?style=flat-square)](https://nodejs.org)
@@ -17,9 +17,17 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-hooks-purple?style=flat-square)](https://claude.ai/code)
 [![No API key](https://img.shields.io/badge/API%20key-not%20required-brightgreen?style=flat-square)](#)
 
-*Every insight your team discovers with Claude Code — remembered forever.*
+*Every insight your team discovers — remembered forever. Every preference you have — written to CLAUDE.md automatically.*
 
 </div>
+
+---
+
+## Two things TeamMind does
+
+**1. Team memory** — captures what your team learns with Claude Code and shares it across every developer's sessions automatically.
+
+**2. Personal persona** — watches how you interact with Claude Code, figures out your preferences, and writes them directly to `~/.claude/CLAUDE.md`. Claude reads that file in every project, so it adapts to how you work without you ever having to explain yourself again.
 
 ---
 
@@ -87,6 +95,40 @@ Open Claude Code → TeamMind silently injects relevant memories into Claude's c
 
 ---
 
+## Personal persona — writes to your CLAUDE.md
+
+TeamMind watches your sessions for signals about how you prefer to work with Claude — things like "be more concise", "just do it", "show me the code first", "stop summarizing". It aggregates these across sessions and writes them directly to `~/.claude/CLAUDE.md`.
+
+Since `~/.claude/CLAUDE.md` is the global instructions file that Claude Code reads at the start of **every** session in **every** project, your preferences travel with you automatically — no setup per project, no repeating yourself.
+
+```
+~/.claude/CLAUDE.md
+
+<!-- teammind-persona:start -->
+
+## User Interaction Preferences
+
+- Keep responses concise — avoid lengthy explanations
+- Take action directly — do not ask for confirmation on straightforward tasks
+- Show code directly rather than describing it first
+
+<!-- teammind-persona:end -->
+```
+
+TeamMind only touches the section between its markers — everything else in your CLAUDE.md stays exactly as it is.
+
+```bash
+teammind persona              # see your current preferences
+teammind persona --update     # re-analyze sessions and rewrite to CLAUDE.md
+teammind persona --reset      # remove the section from CLAUDE.md
+```
+
+**What it detects:** response length, explanation style, code-first vs description-first, confirmation prompts, formatting preferences, summary behavior.
+
+**What it never touches:** how Claude writes code, architectural choices, language/framework preferences — those belong in your project's CLAUDE.md, not here.
+
+---
+
 ## Daily commands
 
 ```bash
@@ -111,6 +153,12 @@ teammind memory <id>
 teammind forget <id>
 teammind forget --stale        # clear outdated memories
 teammind forget --all          # wipe everything for this project
+```
+
+```bash
+# Build / update your personal preferences in CLAUDE.md
+teammind persona
+teammind persona --update
 ```
 
 **`teammind status` shows a live breakdown:**
