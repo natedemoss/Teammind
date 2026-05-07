@@ -294,7 +294,7 @@ program
     const mem = getMemoryById(id)
     if (!mem) {
       if (opts.json) {
-        outputJson({ error: { message: 'Memory not found', code: 'NOT_FOUND' }, id })
+        outputJson({ error: 'Memory not found', code: 'NOT_FOUND', id })
       } else {
         console.log(chalk.red(`\nMemory not found: ${id}\n`))
       }
@@ -730,7 +730,7 @@ function memoryToJson(mem: Memory) {
     updated_at: mem.updated_at,
     created_by: mem.created_by,
     source: mem.source,
-    stale: Boolean(mem.stale),
+    stale: !!mem.stale,
   }
 }
 
