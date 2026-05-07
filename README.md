@@ -14,7 +14,7 @@
 [![npm version](https://img.shields.io/npm/v/teammind?color=blue&style=flat-square)](https://npmjs.com/package/teammind)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-green?style=flat-square)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
-[![Claude Code](https://img.shields.io/badge/Claude%20Code-hooks-purple?style=flat-square)](https://claude.ai/code)
+[![Users](https://img.shields.io/badge/Users:%20713-purple?style=flat-square)](https://www.npmjs.com/package/teammind)
 [![No API key](https://img.shields.io/badge/API%20key-not%20required-brightgreen?style=flat-square)](#)
 
 *Every insight your team discovers — remembered forever. Every preference you have — written to CLAUDE.md automatically.*
