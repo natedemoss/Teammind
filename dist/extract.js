@@ -15,7 +15,8 @@ const SIGNALS = [
     ['api', /\b(api|sdk|endpoint|workaround|undocumented|library|package)\b/gi, 1],
     ['pattern', /\b(pattern|architecture|convention|approach|design|strategy)\b/gi, 1],
 ];
-const SCORE_THRESHOLD = 3;
+const SCORE_THRESHOLD_BASE = 3;
+const SCORE_THRESHOLD_LONG = 5; // stricter for very long sessions (more noise)
 function scoreAndTag(text) {
     const tagSet = new Set();
     let score = 0;
@@ -87,11 +88,13 @@ async function extractMemoriesFromTranscript(transcript, _apiKey // kept for int
 ) {
     if (!transcript || transcript.length < 100)
         return [];
+    // Use a stricter threshold for very long sessions to reduce noise
+    const threshold = transcript.length > 50000 ? SCORE_THRESHOLD_LONG : SCORE_THRESHOLD_BASE;
     const memories = [];
     const paragraphs = getAssistantParagraphs(transcript);
     for (const para of paragraphs) {
         const { score, tags } = scoreAndTag(para);
-        if (score < SCORE_THRESHOLD)
+        if (score < threshold)
             continue;
         // Skip near-duplicates found within this same session
         if (memories.some(m => wordOverlap(m.content, para) > 0.6))

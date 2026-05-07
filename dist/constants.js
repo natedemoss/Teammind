@@ -13,5 +13,5 @@ exports.HOOKS_DIR = path_1.default.join(exports.TEAMMIND_DIR, 'hooks');
 exports.MAX_INJECT_MEMORIES = 10;
 exports.EMBED_MODEL = 'Xenova/all-MiniLM-L6-v2';
 exports.EMBED_DIM = 384;
-exports.VERSION = '0.1.1';
+exports.VERSION = '0.2.1';
 //# sourceMappingURL=constants.js.map

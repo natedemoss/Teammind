@@ -17,24 +17,41 @@ const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
 const fs_1 = require("fs");
 const child_process_1 = require("child_process");
-// Read the full JSONL transcript from the path provided by the Stop hook
+// Read and parse the JSONL transcript provided by Claude Code's Stop hook.
+// Each line is a conversation entry with structure: { type, message: { role, content } }
 function readTranscriptFile(transcriptPath) {
     try {
         const raw = (0, fs_1.readFileSync)(transcriptPath, 'utf8');
         const lines = raw.split('\n').filter(l => l.trim());
-        return lines.map(line => {
+        const parts = [];
+        for (const line of lines) {
             try {
                 const entry = JSON.parse(line);
-                const role = (entry.role || 'unknown').toUpperCase();
-                const content = Array.isArray(entry.content)
-                    ? entry.content.map((c) => (typeof c === 'string' ? c : c?.text || JSON.stringify(c))).join('\n')
-                    : String(entry.content || '');
-                return `[${role}]: ${content}`;
+                // Only process user/assistant turns — skip system, file-history-snapshot, etc.
+                if (entry.type !== 'user' && entry.type !== 'assistant')
+                    continue;
+                const msg = entry.message;
+                if (!msg)
+                    continue;
+                const role = (msg.role || entry.type).toUpperCase();
+                // Extract only text content blocks — skip tool_use, tool_result, thinking
+                let text = '';
+                if (Array.isArray(msg.content)) {
+                    text = msg.content
+                        .filter((c) => c.type === 'text')
+                        .map((c) => String(c.text || ''))
+                        .join('\n');
+                }
+                else if (typeof msg.content === 'string') {
+                    text = msg.content;
+                }
+                if (!text.trim())
+                    continue;
+                parts.push(`[${role}]: ${text}`);
             }
-            catch {
-                return line;
-            }
-        }).join('\n\n');
+            catch { /* skip malformed lines */ }
+        }
+        return parts.join('\n\n');
     }
     catch {
         return '';
@@ -52,6 +69,7 @@ const server_1 = require("./server");
 const config_1 = require("./config");
 const search_2 = require("./search");
 const db_2 = require("./db");
+const persona_1 = require("./persona");
 const program = new commander_1.Command();
 program
     .name('teammind')
@@ -137,13 +155,13 @@ program
     const gitCtx = await (0, git_1.getGitContext)(process.cwd());
     const repoPath = gitCtx?.root || (0, git_1.normalizePath)(process.cwd());
     const projectName = path_1.default.basename(repoPath);
-    const allMemories = (0, db_1.getMemories)(repoPath, { limit: 200, includeStale: true });
+    // Run staleness check in background (non-blocking)
+    (0, staleness_1.checkAndMarkStaleness)(repoPath).catch(() => { });
+    const allMemories = (0, db_1.getMemories)(repoPath, { limit: 500, includeStale: true });
     const fresh = allMemories.filter(m => !m.stale);
     const stale = allMemories.filter(m => m.stale);
     const recent = fresh.slice(0, 5);
-    const lastCapture = fresh[0]
-        ? formatAge(fresh[0].created_at)
-        : 'never';
+    const lastCapture = fresh[0] ? formatAge(fresh[0].created_at) : 'never';
     console.log(chalk_1.default.bold(`\nTeamMind — ${projectName}`));
     console.log('─'.repeat(40));
     if (allMemories.length === 0) {
@@ -151,17 +169,30 @@ program
     }
     else {
         console.log(`  ${chalk_1.default.green(fresh.length)} fresh memories  •  ${stale.length > 0 ? chalk_1.default.yellow(stale.length + ' stale') : '0 stale'}  •  last captured ${lastCapture}`);
+        // Tag breakdown
+        const tagStats = (0, db_1.getTagStats)(repoPath);
+        const tagEntries = Object.entries(tagStats).sort((a, b) => b[1] - a[1]);
+        if (tagEntries.length > 0) {
+            const maxCount = tagEntries[0][1];
+            console.log('\n' + chalk_1.default.dim('  By type:'));
+            for (const [tag, count] of tagEntries) {
+                const bar = '█'.repeat(Math.round((count / maxCount) * 10));
+                console.log(`    ${chalk_1.default.cyan(tag.padEnd(12))} ${chalk_1.default.dim(bar)} ${count}`);
+            }
+        }
         if (recent.length > 0) {
-            console.log('\n' + chalk_1.default.dim('Recent captures:'));
+            console.log('\n' + chalk_1.default.dim('  Recent:'));
             for (const m of recent) {
                 const tag = chalk_1.default.cyan(`[${m.tags[0] || 'note'}]`);
                 const age = chalk_1.default.dim(`— ${formatAge(m.created_at)}`);
-                console.log(`  • ${tag} ${m.summary} ${age}`);
+                console.log(`  • ${tag} ${m.summary.slice(0, 60)} ${age}`);
             }
         }
     }
     console.log();
     console.log(`Run ${chalk_1.default.cyan('teammind memories')} to browse all.`);
+    if (stale.length > 0)
+        console.log(`Run ${chalk_1.default.cyan('teammind forget --stale')} to clear ${stale.length} stale memories.`);
     console.log(`Run ${chalk_1.default.cyan('teammind team')} to share with your team.\n`);
 });
 // ─── memories ────────────────────────────────────────────────────────────────
@@ -169,18 +200,25 @@ program
     .command('memories [query]')
     .description('Browse or search memories for the current project')
     .option('-n, --limit <n>', 'Number of results', '20')
+    .option('-t, --tag <tag>', 'Filter by tag (bug, decision, gotcha, security, performance, config, api, pattern)')
     .option('--stale', 'Include stale memories')
     .action(async (query, opts) => {
     const gitCtx = await (0, git_1.getGitContext)(process.cwd());
     const repoPath = gitCtx?.root || (0, git_1.normalizePath)(process.cwd());
     const limit = parseInt(opts.limit) || 20;
     let memories;
-    if (query) {
+    if (opts.tag) {
+        memories = (0, db_1.getMemoriesByTag)(repoPath, opts.tag, limit);
+        if (memories.length === 0) {
+            console.log(chalk_1.default.dim(`\nNo [${opts.tag}] memories found.\n`));
+            return;
+        }
+    }
+    else if (query) {
         const spinner = (0, ora_1.default)(`Searching for "${query}"...`).start();
         try {
-            const results = await (0, search_1.searchMemories)(query, repoPath, { limit });
+            memories = await (0, search_1.searchMemories)(query, repoPath, { limit });
             spinner.stop();
-            memories = results;
         }
         catch {
             spinner.stop();
@@ -203,27 +241,59 @@ program
         const files = m.file_paths.length > 0
             ? chalk_1.default.dim(`\n     ${m.file_paths.join(', ')}`)
             : '';
-        console.log(`${chalk_1.default.bold(String(i + 1).padStart(2))}. ${tags} ${chalk_1.default.white(m.summary)}${staleNote} ${age}`);
+        console.log(`${chalk_1.default.bold(String(i + 1).padStart(2))}. ${tags} ${chalk_1.default.white(m.summary)}${staleNote}  ${age}`);
         console.log(`    ${chalk_1.default.dim(m.content.slice(0, 200) + (m.content.length > 200 ? '...' : ''))}${files}`);
         console.log(`    ${chalk_1.default.dim('id: ' + m.id)}`);
         console.log();
     }
 });
+// ─── memory (single) ──────────────────────────────────────────────────────────
+program
+    .command('memory <id>')
+    .description('View the full content of a specific memory')
+    .action((id) => {
+    const mem = (0, db_1.getMemoryById)(id);
+    if (!mem) {
+        console.log(chalk_1.default.red(`\nMemory not found: ${id}\n`));
+        return;
+    }
+    const tags = mem.tags.length > 0 ? `[${mem.tags.join(', ')}]` : '[note]';
+    const staleNote = mem.stale ? chalk_1.default.yellow('  ⚠ STALE') : '';
+    console.log();
+    console.log(chalk_1.default.bold(chalk_1.default.cyan(tags) + '  ' + mem.summary) + staleNote);
+    console.log(chalk_1.default.dim('─'.repeat(60)));
+    console.log(mem.content);
+    console.log();
+    if (mem.file_paths.length > 0)
+        console.log(chalk_1.default.dim('Files:   ') + mem.file_paths.join(', '));
+    if (mem.functions.length > 0)
+        console.log(chalk_1.default.dim('Symbols: ') + mem.functions.join(', '));
+    console.log(chalk_1.default.dim(`Branch:  ${mem.git_branch || '?'}  |  By: ${mem.created_by}  |  ${formatAge(mem.created_at)}`));
+    console.log(chalk_1.default.dim(`id: ${mem.id}`));
+    console.log();
+});
 // ─── forget ───────────────────────────────────────────────────────────────────
 program
     .command('forget [id]')
-    .description('Delete a memory or clear all stale memories')
+    .description('Delete a memory, clear stale memories, or wipe all memories for this project')
     .option('--stale', 'Delete all stale memories for this project')
+    .option('--all', 'Delete ALL memories for this project')
     .action(async (id, opts) => {
     const gitCtx = await (0, git_1.getGitContext)(process.cwd());
     const repoPath = gitCtx?.root || (0, git_1.normalizePath)(process.cwd());
+    const projectName = path_1.default.basename(repoPath);
+    if (opts.all) {
+        const count = (0, db_1.deleteAllMemories)(repoPath);
+        console.log(chalk_1.default.green(`✓ Deleted all ${count} memories for ${projectName}`));
+        return;
+    }
     if (opts.stale) {
         const count = (0, db_1.deleteStaleMemories)(repoPath);
         console.log(chalk_1.default.green(`✓ Deleted ${count} stale memories`));
         return;
     }
     if (!id) {
-        console.log(chalk_1.default.red('Provide a memory id or use --stale to clear stale memories'));
+        console.log(chalk_1.default.red('Provide a memory id, or use --stale / --all'));
         console.log('Run ' + chalk_1.default.cyan('teammind memories') + ' to see ids');
         return;
     }
@@ -486,6 +556,26 @@ program
             console.error(`[teammind] Extracted ${saved} new memories (${deduped} duplicates skipped)`);
         }
         (0, db_1.markSessionProcessed)(sessionId);
+        // Auto-update persona if interval is set and we've hit the threshold
+        const interval = config.persona_auto_update_interval;
+        if (interval > 0) {
+            const totalProcessed = (0, db_2.countProcessedSessions)();
+            if (totalProcessed % interval === 0) {
+                try {
+                    const sessionMeta = (0, db_2.getAllSessions)(50).filter(s => s.processed && s.transcript_len > 200);
+                    const transcripts = [];
+                    for (const s of sessionMeta.slice(0, 30)) {
+                        const full = (0, db_1.getSession)(s.id);
+                        if (full?.transcript)
+                            transcripts.push(full.transcript);
+                    }
+                    const prefs = (0, persona_1.extractPreferencesFromTranscripts)(transcripts);
+                    if (prefs.length > 0)
+                        (0, persona_1.writePersonaSection)(prefs);
+                }
+                catch { /* never break the background worker */ }
+            }
+        }
     }
     catch {
         // Background worker — silent failure is fine
@@ -620,6 +710,7 @@ program
     console.log(`  ${'max_inject'.padEnd(25)} ${config.max_inject}`);
     console.log(`  ${'extraction_enabled'.padEnd(25)} ${config.extraction_enabled}`);
     console.log(`  ${'similarity_threshold'.padEnd(25)} ${config.similarity_threshold} (dedup threshold)`);
+    console.log(`  ${'persona_auto_update_interval'.padEnd(25)} ${config.persona_auto_update_interval} (sessions, 0 = disabled)`);
     console.log();
 }))
     .action(() => {
@@ -630,6 +721,106 @@ program
     console.log(`  ${'max_inject'.padEnd(25)} ${config.max_inject}`);
     console.log(`  ${'extraction_enabled'.padEnd(25)} ${config.extraction_enabled}`);
     console.log(`  ${'similarity_threshold'.padEnd(25)} ${config.similarity_threshold}`);
+    console.log(`  ${'persona_auto_update_interval'.padEnd(25)} ${config.persona_auto_update_interval} (sessions, 0 = disabled)`);
+    console.log();
+});
+// ─── remember ────────────────────────────────────────────────────────────────
+program
+    .command('remember <text>')
+    .description('Manually save a memory for the current project')
+    .option('-t, --tag <tag>', 'Memory type (bug, decision, gotcha, security, performance, config, api, pattern)', 'note')
+    .action(async (text, opts) => {
+    const gitCtx = await (0, git_1.getGitContext)(process.cwd());
+    const repoPath = gitCtx?.root || (0, git_1.normalizePath)(process.cwd());
+    const username = os_1.default.userInfo().username || 'local';
+    const config = (0, config_1.loadConfig)();
+    const spinner = (0, ora_1.default)('Saving memory...').start();
+    let embedding = null;
+    try {
+        const vec = await (0, embed_1.embed)(text);
+        embedding = (0, embed_1.serializeVec)(vec);
+    }
+    catch { /* embedding optional */ }
+    if (embedding) {
+        const dupId = await (0, search_2.findDuplicate)(text, repoPath, config.similarity_threshold);
+        if (dupId) {
+            spinner.warn('A very similar memory already exists — skipped');
+            console.log(chalk_1.default.dim(`  Run ${chalk_1.default.cyan('teammind memory ' + dupId)} to view it`));
+            return;
+        }
+    }
+    const summary = text.match(/^.{10,}?[.!?](?:\s|$)/)?.[0]?.trim().slice(0, 80) || text.slice(0, 80);
+    const id = (0, db_1.saveMemory)({
+        content: text,
+        summary,
+        tags: [opts.tag],
+        file_paths: [],
+        functions: [],
+        embedding,
+        repo_path: repoPath,
+        git_commit: gitCtx?.commit || null,
+        git_branch: gitCtx?.branch || null,
+        created_by: username,
+        source: 'manual',
+        stale: 0,
+    });
+    spinner.succeed(`Memory saved  ${chalk_1.default.dim('id: ' + id)}`);
+    console.log(chalk_1.default.dim(`\n  [${opts.tag}] ${summary}\n`));
+});
+// ─── persona ──────────────────────────────────────────────────────────────────
+program
+    .command('persona')
+    .description('Build your interaction preferences and write them to CLAUDE.md')
+    .option('--update', 'Analyze sessions and update preferences in CLAUDE.md')
+    .option('--reset', 'Remove persona section from CLAUDE.md')
+    .action(async (opts) => {
+    if (opts.reset) {
+        (0, persona_1.clearPersonaSection)();
+        console.log(chalk_1.default.green('✓ Persona section removed from ~/.claude/CLAUDE.md'));
+        return;
+    }
+    // Default: show current persona
+    if (!opts.update) {
+        const current = (0, persona_1.readPersonaSection)();
+        if (!current) {
+            console.log(chalk_1.default.dim('\nNo persona set yet.'));
+            console.log('Run ' + chalk_1.default.cyan('teammind persona --update') + ' to build one from your sessions.\n');
+        }
+        else {
+            console.log(chalk_1.default.bold('\nYour interaction preferences (in ~/.claude/CLAUDE.md):\n'));
+            for (const line of current.split('\n').filter(l => l.startsWith('-'))) {
+                console.log('  ' + chalk_1.default.cyan('•') + ' ' + line.slice(2));
+            }
+            console.log();
+            console.log('Run ' + chalk_1.default.cyan('teammind persona --update') + ' to refresh.');
+            console.log('Run ' + chalk_1.default.cyan('teammind persona --reset') + ' to remove.\n');
+        }
+        return;
+    }
+    // --update: analyze sessions and write to CLAUDE.md
+    const spinner = (0, ora_1.default)('Analyzing your sessions for preferences...').start();
+    const sessionMeta = (0, db_2.getAllSessions)(50).filter(s => s.processed && s.transcript_len > 200);
+    if (sessionMeta.length === 0) {
+        spinner.fail('No sessions to analyze yet — use Claude Code normally first');
+        return;
+    }
+    const transcripts = [];
+    for (const s of sessionMeta.slice(0, 30)) {
+        const full = (0, db_1.getSession)(s.id);
+        if (full?.transcript)
+            transcripts.push(full.transcript);
+    }
+    const prefs = (0, persona_1.extractPreferencesFromTranscripts)(transcripts);
+    if (prefs.length === 0) {
+        spinner.warn('No strong preferences detected yet — use Claude Code more and try again');
+        return;
+    }
+    (0, persona_1.writePersonaSection)(prefs);
+    spinner.succeed(`Updated ${persona_1.GLOBAL_CLAUDE_MD}`);
+    console.log(chalk_1.default.bold('\nAdded to ~/.claude/CLAUDE.md:\n'));
+    for (const p of prefs) {
+        console.log('  ' + chalk_1.default.green('+') + ' ' + p);
+    }
     console.log();
 });
 program.parse();

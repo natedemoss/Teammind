@@ -15,6 +15,7 @@ const DEFAULTS = {
     max_inject: 10,
     extraction_enabled: true,
     similarity_threshold: 0.88,
+    persona_auto_update_interval: 10,
 };
 function loadConfig() {
     if (!(0, fs_1.existsSync)(CONFIG_PATH))
@@ -40,11 +41,14 @@ function coerceConfigValue(key, value) {
         return value === 'true' || value === '1';
     if (key === 'similarity_threshold')
         return parseFloat(value);
+    if (key === 'persona_auto_update_interval')
+        return parseInt(value);
     return value;
 }
 exports.VALID_KEYS = [
     'max_inject',
     'extraction_enabled',
     'similarity_threshold',
+    'persona_auto_update_interval',
 ];
 //# sourceMappingURL=config.js.map
