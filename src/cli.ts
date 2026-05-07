@@ -262,8 +262,8 @@ program
     }
 
     if (opts.json) {
-      const payload = memories.map(memoryToJsonPayload)
-      console.log(JSON.stringify(payload, null, 2))
+      const jsonMemories = memories.map(memoryToJsonPayload)
+      console.log(JSON.stringify(jsonMemories, null, 2))
       return
     }
 
@@ -295,15 +295,15 @@ program
     if (!mem) {
       if (opts.json) {
         console.log(JSON.stringify({ error: 'Memory not found', id }, null, 2))
-        process.exitCode = 1
       } else {
         console.log(chalk.red(`\nMemory not found: ${id}\n`))
       }
+      process.exitCode = 1
       return
     }
     if (opts.json) {
-      const payload = memoryToJsonPayload(mem)
-      console.log(JSON.stringify(payload, null, 2))
+      const jsonMemory = memoryToJsonPayload(mem)
+      console.log(JSON.stringify(jsonMemory, null, 2))
       return
     }
     const tags = mem.tags.length > 0 ? `[${mem.tags.join(', ')}]` : '[note]'
