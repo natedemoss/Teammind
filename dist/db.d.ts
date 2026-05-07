@@ -50,14 +50,9 @@ export declare function getMemoriesWithFiles(repoPath: string): Array<Memory & {
         file_hash: string;
     }>;
 }>;
-export declare function getTagStats(repoPath: string): Record<string, number>;
-export declare function deleteAllMemories(repoPath: string): number;
-export declare function updateMemory(id: string, content: string, summary: string): void;
-export declare function getMemoriesByTag(repoPath: string, tag: string, limit?: number): Memory[];
 export declare function saveSession(s: Omit<Session, 'id' | 'processed' | 'created_at'>): string;
 export declare function getSession(id: string): Session | null;
 export declare function markSessionProcessed(id: string): void;
-export declare function countProcessedSessions(): number;
 export declare function pruneOldSessions(daysOld?: number): void;
 export declare function getPendingSessions(): Session[];
 export declare function getAllSessions(limit?: number): Array<Session & {

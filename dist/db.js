@@ -12,14 +12,9 @@ exports.markMemoryStale = markMemoryStale;
 exports.countMemories = countMemories;
 exports.getMemoryFiles = getMemoryFiles;
 exports.getMemoriesWithFiles = getMemoriesWithFiles;
-exports.getTagStats = getTagStats;
-exports.deleteAllMemories = deleteAllMemories;
-exports.updateMemory = updateMemory;
-exports.getMemoriesByTag = getMemoriesByTag;
 exports.saveSession = saveSession;
 exports.getSession = getSession;
 exports.markSessionProcessed = markSessionProcessed;
-exports.countProcessedSessions = countProcessedSessions;
 exports.pruneOldSessions = pruneOldSessions;
 exports.getPendingSessions = getPendingSessions;
 exports.getAllSessions = getAllSessions;
@@ -188,30 +183,6 @@ function getMemoriesWithFiles(repoPath) {
         tracked_files: getMemoryFiles(m.id)
     }));
 }
-function getTagStats(repoPath) {
-    const rows = getDb().prepare('SELECT tags FROM memories WHERE repo_path = ? AND stale = 0').all(normPath(repoPath));
-    const stats = {};
-    for (const row of rows) {
-        try {
-            for (const tag of JSON.parse(row.tags || '[]')) {
-                stats[tag] = (stats[tag] || 0) + 1;
-            }
-        }
-        catch { }
-    }
-    return stats;
-}
-function deleteAllMemories(repoPath) {
-    const result = getDb().prepare('DELETE FROM memories WHERE repo_path = ?').run(normPath(repoPath));
-    return result.changes;
-}
-function updateMemory(id, content, summary) {
-    getDb().prepare('UPDATE memories SET content = ?, summary = ?, updated_at = ? WHERE id = ?').run(content, summary, Date.now(), id);
-}
-function getMemoriesByTag(repoPath, tag, limit = 50) {
-    const rows = getDb().prepare(`SELECT * FROM memories WHERE repo_path = ? AND stale = 0 AND tags LIKE ? ORDER BY created_at DESC LIMIT ?`).all(normPath(repoPath), `%"${tag}"%`, limit);
-    return rows.map(rowToMemory);
-}
 // ─── Session operations ──────────────────────────────────────────────────────
 function saveSession(s) {
     const db = getDb();
@@ -238,10 +209,6 @@ function getSession(id) {
 }
 function markSessionProcessed(id) {
     getDb().prepare('UPDATE sessions SET processed = 1 WHERE id = ?').run(id);
-}
-function countProcessedSessions() {
-    const row = getDb().prepare('SELECT COUNT(*) as n FROM sessions WHERE processed = 1').get();
-    return row.n;
 }
 function pruneOldSessions(daysOld = 7) {
     const cutoff = Date.now() - daysOld * 24 * 60 * 60 * 1000;
