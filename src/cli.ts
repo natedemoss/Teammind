@@ -290,7 +290,7 @@ program
   .command('memory <id>')
   .description('View the full content of a specific memory')
   .option('--json', 'Output result as JSON')
-  .action((id: string, opts) => {
+  .action((id: string, opts: { json?: boolean }) => {
     const mem = getMemoryById(id)
     if (!mem) {
       if (opts.json) {
