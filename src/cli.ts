@@ -53,7 +53,7 @@ function readTranscriptFile(transcriptPath: string): string {
 }
 
 import { VERSION, TEAMMIND_DIR, HOOKS_DIR, DB_PATH } from './constants'
-import { getDb, getMemories, getMemoryById, deleteMemory, deleteStaleMemories, deleteAllMemories, countMemories, saveSession, getSession, markSessionProcessed, saveMemory, saveMemoryFiles, pruneOldSessions, getTagStats, getMemoriesByTag } from './db'
+import { getDb, getMemories, getMemoryById, deleteMemory, deleteStaleMemories, deleteAllMemories, countMemories, saveSession, getSession, markSessionProcessed, saveMemory, saveMemoryFiles, pruneOldSessions, getTagStats, getMemoriesByTag, Memory } from './db'
 import { getGitContext, hashFile, resolveFilePaths, normalizePath } from './git'
 import { rankMemoriesForInjection, formatMemoriesForContext, searchMemories } from './search'
 import { extractMemoriesFromTranscript, formatTranscript } from './extract'
@@ -262,22 +262,7 @@ program
     }
 
     if (opts.json) {
-      const payload = memories.map(m => ({
-        id: m.id,
-        summary: m.summary,
-        content: m.content,
-        tags: m.tags,
-        file_paths: m.file_paths,
-        functions: m.functions,
-        repo_path: m.repo_path,
-        git_commit: m.git_commit,
-        git_branch: m.git_branch,
-        created_at: m.created_at,
-        updated_at: m.updated_at,
-        created_by: m.created_by,
-        source: m.source,
-        stale: Boolean(m.stale),
-      }))
+      const payload = memories.map(memoryToJsonPayload)
       console.log(JSON.stringify(payload, null, 2))
       return
     }
@@ -317,22 +302,7 @@ program
       return
     }
     if (opts.json) {
-      const payload = {
-        id: mem.id,
-        summary: mem.summary,
-        content: mem.content,
-        tags: mem.tags,
-        file_paths: mem.file_paths,
-        functions: mem.functions,
-        repo_path: mem.repo_path,
-        git_commit: mem.git_commit,
-        git_branch: mem.git_branch,
-        created_at: mem.created_at,
-        updated_at: mem.updated_at,
-        created_by: mem.created_by,
-        source: mem.source,
-        stale: Boolean(mem.stale),
-      }
+      const payload = memoryToJsonPayload(mem)
       console.log(JSON.stringify(payload, null, 2))
       return
     }
@@ -743,6 +713,25 @@ function formatAge(ts: number): string {
   if (days < 30) return `${days}d ago`
   if (days < 365) return `${Math.floor(days / 30)}mo ago`
   return `${Math.floor(days / 365)}y ago`
+}
+
+function memoryToJsonPayload(mem: Memory) {
+  return {
+    id: mem.id,
+    summary: mem.summary,
+    content: mem.content,
+    tags: mem.tags,
+    file_paths: mem.file_paths,
+    functions: mem.functions,
+    repo_path: mem.repo_path,
+    git_commit: mem.git_commit,
+    git_branch: mem.git_branch,
+    created_at: mem.created_at,
+    updated_at: mem.updated_at,
+    created_by: mem.created_by,
+    source: mem.source,
+    stale: Boolean(mem.stale),
+  }
 }
 
 // ─── sessions ────────────────────────────────────────────────────────────────
