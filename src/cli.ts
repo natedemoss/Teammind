@@ -221,6 +221,7 @@ program
   .option('-n, --limit <n>', 'Number of results', '20')
   .option('-t, --tag <tag>', 'Filter by tag (bug, decision, gotcha, security, performance, config, api, pattern)')
   .option('--stale', 'Include stale memories')
+  .option('--json', 'Output results as JSON')
   .action(async (query, opts) => {
     const gitCtx = await getGitContext(process.cwd())
     const repoPath = gitCtx?.root || normalizePath(process.cwd())
@@ -231,7 +232,11 @@ program
     if (opts.tag) {
       memories = getMemoriesByTag(repoPath, opts.tag, limit)
       if (memories.length === 0) {
-        console.log(chalk.dim(`\nNo [${opts.tag}] memories found.\n`))
+        if (opts.json) {
+          console.log('[]')
+        } else {
+          console.log(chalk.dim(`\nNo [${opts.tag}] memories found.\n`))
+        }
         return
       }
     } else if (query) {
@@ -248,7 +253,32 @@ program
     }
 
     if (memories.length === 0) {
-      console.log(chalk.dim('\nNo memories found.\n'))
+      if (opts.json) {
+        console.log('[]')
+      } else {
+        console.log(chalk.dim('\nNo memories found.\n'))
+      }
+      return
+    }
+
+    if (opts.json) {
+      const payload = memories.map(m => ({
+        id: m.id,
+        summary: m.summary,
+        content: m.content,
+        tags: m.tags,
+        file_paths: m.file_paths,
+        functions: m.functions,
+        repo_path: m.repo_path,
+        git_commit: m.git_commit,
+        git_branch: m.git_branch,
+        created_at: m.created_at,
+        updated_at: m.updated_at,
+        created_by: m.created_by,
+        source: m.source,
+        stale: Boolean(m.stale),
+      }))
+      console.log(JSON.stringify(payload, null, 2))
       return
     }
 
@@ -274,10 +304,36 @@ program
 program
   .command('memory <id>')
   .description('View the full content of a specific memory')
-  .action((id: string) => {
+  .option('--json', 'Output result as JSON')
+  .action((id: string, opts) => {
     const mem = getMemoryById(id)
     if (!mem) {
-      console.log(chalk.red(`\nMemory not found: ${id}\n`))
+      if (opts.json) {
+        console.log(JSON.stringify({ error: 'Memory not found', id }, null, 2))
+        process.exitCode = 1
+      } else {
+        console.log(chalk.red(`\nMemory not found: ${id}\n`))
+      }
+      return
+    }
+    if (opts.json) {
+      const payload = {
+        id: mem.id,
+        summary: mem.summary,
+        content: mem.content,
+        tags: mem.tags,
+        file_paths: mem.file_paths,
+        functions: mem.functions,
+        repo_path: mem.repo_path,
+        git_commit: mem.git_commit,
+        git_branch: mem.git_branch,
+        created_at: mem.created_at,
+        updated_at: mem.updated_at,
+        created_by: mem.created_by,
+        source: mem.source,
+        stale: Boolean(mem.stale),
+      }
+      console.log(JSON.stringify(payload, null, 2))
       return
     }
     const tags = mem.tags.length > 0 ? `[${mem.tags.join(', ')}]` : '[note]'
