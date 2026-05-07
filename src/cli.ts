@@ -53,7 +53,7 @@ function readTranscriptFile(transcriptPath: string): string {
 }
 
 import { VERSION, TEAMMIND_DIR, HOOKS_DIR, DB_PATH } from './constants'
-import { getDb, getMemories, getMemoryById, deleteMemory, deleteStaleMemories, deleteAllMemories, countMemories, saveSession, getSession, markSessionProcessed, saveMemory, saveMemoryFiles, pruneOldSessions, getTagStats, getMemoriesByTag } from './db'
+import { getDb, getMemories, getMemoryById, deleteMemory, deleteStaleMemories, deleteAllMemories, countMemories, saveSession, getSession, markSessionProcessed, saveMemory, saveMemoryFiles, pruneOldSessions, getTagStats, getMemoriesByTag, Memory } from './db'
 import { getGitContext, hashFile, resolveFilePaths, normalizePath } from './git'
 import { rankMemoriesForInjection, formatMemoriesForContext, searchMemories } from './search'
 import { extractMemoriesFromTranscript, formatTranscript } from './extract'
@@ -221,6 +221,7 @@ program
   .option('-n, --limit <n>', 'Number of results', '20')
   .option('-t, --tag <tag>', 'Filter by tag (bug, decision, gotcha, security, performance, config, api, pattern)')
   .option('--stale', 'Include stale memories')
+  .option('--json', 'Output results as JSON')
   .action(async (query, opts) => {
     const gitCtx = await getGitContext(process.cwd())
     const repoPath = gitCtx?.root || normalizePath(process.cwd())
@@ -231,7 +232,11 @@ program
     if (opts.tag) {
       memories = getMemoriesByTag(repoPath, opts.tag, limit)
       if (memories.length === 0) {
-        console.log(chalk.dim(`\nNo [${opts.tag}] memories found.\n`))
+        if (opts.json) {
+          console.log('[]')
+        } else {
+          console.log(chalk.dim(`\nNo [${opts.tag}] memories found.\n`))
+        }
         return
       }
     } else if (query) {
@@ -248,7 +253,17 @@ program
     }
 
     if (memories.length === 0) {
-      console.log(chalk.dim('\nNo memories found.\n'))
+      if (opts.json) {
+        console.log('[]')
+      } else {
+        console.log(chalk.dim('\nNo memories found.\n'))
+      }
+      return
+    }
+
+    if (opts.json) {
+      const jsonMemories = memories.map(memoryToJson)
+      outputJson(jsonMemories)
       return
     }
 
@@ -274,10 +289,21 @@ program
 program
   .command('memory <id>')
   .description('View the full content of a specific memory')
-  .action((id: string) => {
+  .option('--json', 'Output result as JSON')
+  .action((id: string, opts: { json?: boolean }) => {
     const mem = getMemoryById(id)
     if (!mem) {
-      console.log(chalk.red(`\nMemory not found: ${id}\n`))
+      if (opts.json) {
+        outputJson({ error: 'Memory not found', code: 'NOT_FOUND', id })
+      } else {
+        console.log(chalk.red(`\nMemory not found: ${id}\n`))
+      }
+      process.exitCode = 1
+      return
+    }
+    if (opts.json) {
+      const jsonMemory = memoryToJson(mem)
+      outputJson(jsonMemory)
       return
     }
     const tags = mem.tags.length > 0 ? `[${mem.tags.join(', ')}]` : '[note]'
@@ -687,6 +713,29 @@ function formatAge(ts: number): string {
   if (days < 30) return `${days}d ago`
   if (days < 365) return `${Math.floor(days / 30)}mo ago`
   return `${Math.floor(days / 365)}y ago`
+}
+
+function memoryToJson(mem: Memory) {
+  return {
+    id: mem.id,
+    summary: mem.summary,
+    content: mem.content,
+    tags: mem.tags,
+    file_paths: mem.file_paths,
+    functions: mem.functions,
+    repo_path: mem.repo_path,
+    git_commit: mem.git_commit,
+    git_branch: mem.git_branch,
+    created_at: mem.created_at,
+    updated_at: mem.updated_at,
+    created_by: mem.created_by,
+    source: mem.source,
+    stale: !!mem.stale,
+  }
+}
+
+function outputJson(data: unknown) {
+  console.log(JSON.stringify(data, null, 2))
 }
 
 // ─── sessions ────────────────────────────────────────────────────────────────
