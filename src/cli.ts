@@ -262,8 +262,8 @@ program
     }
 
     if (opts.json) {
-      const jsonMemories = memories.map(memoryToJsonPayload)
-      console.log(JSON.stringify(jsonMemories, null, 2))
+      const jsonMemories = memories.map(memoryToJson)
+      outputJson(jsonMemories)
       return
     }
 
@@ -294,7 +294,7 @@ program
     const mem = getMemoryById(id)
     if (!mem) {
       if (opts.json) {
-        console.log(JSON.stringify({ error: 'Memory not found', id }, null, 2))
+        outputJson({ error: { message: 'Memory not found', code: 'NOT_FOUND' }, id })
       } else {
         console.log(chalk.red(`\nMemory not found: ${id}\n`))
       }
@@ -302,8 +302,8 @@ program
       return
     }
     if (opts.json) {
-      const jsonMemory = memoryToJsonPayload(mem)
-      console.log(JSON.stringify(jsonMemory, null, 2))
+      const jsonMemory = memoryToJson(mem)
+      outputJson(jsonMemory)
       return
     }
     const tags = mem.tags.length > 0 ? `[${mem.tags.join(', ')}]` : '[note]'
@@ -715,7 +715,7 @@ function formatAge(ts: number): string {
   return `${Math.floor(days / 365)}y ago`
 }
 
-function memoryToJsonPayload(mem: Memory) {
+function memoryToJson(mem: Memory) {
   return {
     id: mem.id,
     summary: mem.summary,
@@ -732,6 +732,10 @@ function memoryToJsonPayload(mem: Memory) {
     source: mem.source,
     stale: Boolean(mem.stale),
   }
+}
+
+function outputJson(data: unknown) {
+  console.log(JSON.stringify(data, null, 2))
 }
 
 // ─── sessions ────────────────────────────────────────────────────────────────
