@@ -149,6 +149,10 @@ teammind memories --tag gotcha
 # Read a memory in full
 teammind memory <id>
 
+# Machine-readable output
+teammind memories --json
+teammind memory <id> --json
+
 # Delete a memory
 teammind forget <id>
 teammind forget --stale        # clear outdated memories
